@@ -134,7 +134,7 @@ def setup_terminal_colors():
     curses.init_pair(6, curses.COLOR_YELLOW, -1)
 
 
-def draw_statistics_box(screen, box_position, average_frequencies, maximum_frequency, is_alert_mode):
+def draw_statistics_box(screen, box_position, average_frequencies, maximum_frequency, is_alert_mode, minimum_averages):
     """
     Draw the statistics box showing frequency averages and percentages.
 
@@ -144,6 +144,7 @@ def draw_statistics_box(screen, box_position, average_frequencies, maximum_frequ
         average_frequencies: List of average frequencies for each core
         maximum_frequency: Maximum frequency capability
         is_alert_mode: Whether we're currently in alert mode (affects colors)
+        minimum_averages: List of minimum average frequencies for each core (None until window is full)
     """
     box_x, box_y, box_width, box_height = box_position
     number_of_cores = len(average_frequencies)
@@ -165,7 +166,7 @@ def draw_statistics_box(screen, box_position, average_frequencies, maximum_frequ
         screen.addstr(box_y, box_x, top_border, box_color)
 
         # Draw the header line - make it exactly box_width characters
-        header_text = '  60s Avg Frequency   '
+        header_text = ' Core   Freq   %  Min% '
         padding_needed = box_width - 2 - len(header_text)  # -2 for the │ characters
         header = '│' + header_text + ' ' * padding_needed + '│'
         screen.addstr(box_y + 1, box_x, header, box_color)
@@ -178,9 +179,13 @@ def draw_statistics_box(screen, box_position, average_frequencies, maximum_frequ
         for core_index, average_freq in enumerate(average_frequencies):
             # Calculate what percentage this represents of maximum frequency
             frequency_percentage = (average_freq / maximum_frequency) * 100
+            
+            # Get minimum average frequency for this core and convert to percentage
+            min_avg = minimum_averages[core_index]
+            min_pct_str = f'{(min_avg / maximum_frequency * 100):>3.0f}%' if min_avg is not None else ' ---'
 
             # Format the line with fixed width to ensure straight right border
-            content_text = f' Core {core_index:<2} {average_freq:>4.0f} MHz {frequency_percentage:>3.0f}% '
+            content_text = f'  {core_index:<2}  {average_freq:>4.0f} {frequency_percentage:>3.0f}% {min_pct_str} '
             padding_needed = box_width - 2 - len(content_text)  # -2 for the │ characters
             frequency_line = '│' + content_text + ' ' * padding_needed + '│'
 
@@ -304,7 +309,7 @@ def draw_frequency_graphs(screen, graph_area, frequency_histories, current_frequ
             screen.addstr(core_y_position, freq_display_x, frequency_display, label_color)
 
 
-def main_display_loop(screen, frequency_histories, maximum_frequency):
+def main_display_loop(screen, frequency_histories, maximum_frequency, minimum_averages):
     """
     Main display loop that continuously updates the frequency monitor.
 
@@ -319,6 +324,7 @@ def main_display_loop(screen, frequency_histories, maximum_frequency):
         screen: The curses screen object
         frequency_histories: List of deque objects for storing frequency history
         maximum_frequency: Maximum frequency capability of the CPU
+        minimum_averages: List to track minimum average frequencies after window is full
     """
     # Set up colors for the terminal display
     setup_terminal_colors()
@@ -336,6 +342,17 @@ def main_display_loop(screen, frequency_histories, maximum_frequency):
         # Step 2: Add the new frequency readings to our history
         for core_index, current_frequency in enumerate(current_frequencies):
             frequency_histories[core_index].append(current_frequency)
+
+        # Step 2.5: Update minimum average frequencies (start tracking immediately)
+        for core_index, core_history in enumerate(frequency_histories):
+            if len(core_history) > 0:  # Have at least one sample
+                current_average = sum(core_history) / len(core_history)
+                if minimum_averages[core_index] is None:
+                    # First time, initialize with current average
+                    minimum_averages[core_index] = current_average
+                else:
+                    # Update minimum if current average is lower
+                    minimum_averages[core_index] = min(minimum_averages[core_index], current_average)
 
         # Step 3: Clear the screen to prepare for new display
         screen.erase()
@@ -356,7 +373,7 @@ def main_display_loop(screen, frequency_histories, maximum_frequency):
         # Step 7: Calculate layout dimensions
 
         # Statistics box (right side of screen)
-        stats_box_width = 30
+        stats_box_width = 35
         stats_box_x = screen_width - stats_box_width - 1
         stats_box_height = number_of_cores + 4  # cores + header + borders
         stats_box_y = (screen_height - stats_box_height) // 2  # center vertically
@@ -375,7 +392,8 @@ def main_display_loop(screen, frequency_histories, maximum_frequency):
             (stats_box_x, stats_box_y, stats_box_width, stats_box_height),
             average_frequencies,
             maximum_frequency,
-            is_throttling
+            is_throttling,
+            minimum_averages
         )
 
         # Draw the alert banner if we're in throttling mode
@@ -437,12 +455,15 @@ def main():
     frequency_histories = [
         deque(maxlen=HISTORY_SECONDS) for _ in range(number_of_cores)
     ]
+    
+    # Create minimum average frequency tracking for each core (starts as None until window is full)
+    minimum_averages = [None for _ in range(number_of_cores)]
 
     # Launch the terminal interface
     # curses.wrapper handles terminal setup/cleanup automatically
     try:
         curses.wrapper(
-            lambda screen: main_display_loop(screen, frequency_histories, maximum_frequency)
+            lambda screen: main_display_loop(screen, frequency_histories, maximum_frequency, minimum_averages)
         )
     except KeyboardInterrupt:
         # User pressed Ctrl+C - exit gracefully
