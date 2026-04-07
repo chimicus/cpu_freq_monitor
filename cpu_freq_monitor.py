@@ -34,6 +34,10 @@ UPDATE_FREQUENCY_HZ = 1
 # percentage of the maximum frequency (0.50 = 50%)
 THROTTLING_ALERT_THRESHOLD = 0.50
 
+# CPU usage alert thresholds
+CPU_USAGE_WARNING_THRESHOLD = 70  # % - warn when core usage exceeds this
+CPU_USAGE_HIGH_THRESHOLD = 90     # % - alert when core usage exceeds this
+
 # ============================================================================
 # CORE FUNCTIONS - CPU Frequency Reading
 # ============================================================================
@@ -65,23 +69,47 @@ def get_cpu_frequencies():
 
     return current_frequencies, maximum_frequency
 
+
+def get_cpu_usage():
+    """
+    Retrieve current CPU usage percentages for all cores.
+
+    Uses psutil to read the current usage percentage of each CPU core.
+    This function blocks briefly to measure CPU usage over a short interval.
+
+    Returns:
+        list: List of current usage percentages (0-100) for each core
+
+    Raises:
+        Exception: If psutil cannot read CPU usage information
+    """
+    # Get CPU usage for each core with a brief interval for accurate measurement
+    current_usage = psutil.cpu_percent(percpu=True, interval=0.1)
+    return current_usage
+
 # ============================================================================
 # HELPER FUNCTIONS - Alert Detection and Statistics
 # ============================================================================
 
-def detect_throttling_alert(frequency_histories, maximum_frequency):
+def detect_alerts(frequency_histories, usage_histories, maximum_frequency):
     """
-    Check if any CPU core is experiencing potential throttling.
+    Check for various CPU alert conditions (throttling, high usage).
 
-    Calculates the average frequency for each core over the stored history
-    and checks if any core's average has dropped below the alert threshold.
+    Calculates averages and checks for:
+    - Frequency throttling (average frequency below threshold)
+    - High CPU usage (current usage above thresholds)
 
     Args:
         frequency_histories: List of deque objects containing frequency history for each core
+        usage_histories: List of deque objects containing usage history for each core
         maximum_frequency: The maximum frequency this CPU can achieve (MHz)
 
     Returns:
-        bool: True if any core's average frequency is below the threshold (potential throttling)
+        tuple: (alert_active, alert_type, average_frequencies, average_usage)
+            - alert_active: True if any alert condition is met
+            - alert_type: String describing the primary alert type
+            - average_frequencies: List of average frequencies for each core
+            - average_usage: List of average usage percentages for each core
     """
     # Calculate average frequency for each core from its history
     average_frequencies = []
@@ -93,11 +121,39 @@ def detect_throttling_alert(frequency_histories, maximum_frequency):
             # If no history yet, assume we're at max frequency
             average_frequencies.append(maximum_frequency)
 
-    # Check if ANY core is below the throttling threshold
+    # Calculate average usage for each core from its history
+    average_usage = []
+    for core_history in usage_histories:
+        if len(core_history) > 0:
+            average_use = sum(core_history) / len(core_history)
+            average_usage.append(average_use)
+        else:
+            # If no history yet, assume 0% usage
+            average_usage.append(0.0)
+
+    # Check for throttling (frequency-based alert)
     throttling_threshold = maximum_frequency * THROTTLING_ALERT_THRESHOLD
     is_throttling = any(avg < throttling_threshold for avg in average_frequencies)
 
-    return is_throttling, average_frequencies
+    # Check for high CPU usage
+    high_usage_cores = sum(1 for avg in average_usage if avg > CPU_USAGE_HIGH_THRESHOLD)
+    warning_usage_cores = sum(1 for avg in average_usage if avg > CPU_USAGE_WARNING_THRESHOLD)
+
+    # Determine primary alert type (prioritize critical conditions)
+    alert_active = False
+    alert_type = "normal"
+    
+    if is_throttling:
+        alert_active = True
+        alert_type = "throttling"
+    elif high_usage_cores > 0:
+        alert_active = True
+        alert_type = f"high_usage_{high_usage_cores}_cores"
+    elif warning_usage_cores > 0:
+        alert_active = True
+        alert_type = f"warning_usage_{warning_usage_cores}_cores"
+
+    return alert_active, alert_type, average_frequencies, average_usage
 
 
 def setup_terminal_colors():
@@ -134,14 +190,15 @@ def setup_terminal_colors():
     curses.init_pair(6, curses.COLOR_YELLOW, -1)
 
 
-def draw_statistics_box(screen, box_position, average_frequencies, maximum_frequency, is_alert_mode, minimum_averages):
+def draw_statistics_box(screen, box_position, average_frequencies, average_usage, maximum_frequency, is_alert_mode, minimum_averages):
     """
-    Draw the statistics box showing frequency averages and percentages.
+    Draw the statistics box showing frequency and usage averages.
 
     Args:
         screen: The curses screen object
         box_position: Tuple of (x, y, width, height) for box placement
         average_frequencies: List of average frequencies for each core
+        average_usage: List of average usage percentages for each core
         maximum_frequency: Maximum frequency capability
         is_alert_mode: Whether we're currently in alert mode (affects colors)
         minimum_averages: List of minimum average frequencies for each core (None until window is full)
@@ -166,7 +223,7 @@ def draw_statistics_box(screen, box_position, average_frequencies, maximum_frequ
         screen.addstr(box_y, box_x, top_border, box_color)
 
         # Draw the header line - make it exactly box_width characters
-        header_text = ' Core   Freq   %  Min% '
+        header_text = ' Core  Freq  %  Usage%  Min% '
         padding_needed = box_width - 2 - len(header_text)  # -2 for the │ characters
         header = '│' + header_text + ' ' * padding_needed + '│'
         screen.addstr(box_y + 1, box_x, header, box_color)
@@ -175,23 +232,34 @@ def draw_statistics_box(screen, box_position, average_frequencies, maximum_frequ
         separator = '├' + '─' * (box_width - 2) + '┤'
         screen.addstr(box_y + 2, box_x, separator, box_color)
 
-        # Draw frequency info for each core
+        # Draw frequency and usage info for each core
         for core_index, average_freq in enumerate(average_frequencies):
             # Calculate what percentage this represents of maximum frequency
             frequency_percentage = (average_freq / maximum_frequency) * 100
             
+            # Get usage percentage for this core
+            usage_percentage = average_usage[core_index]
+            
             # Get minimum average frequency for this core and convert to percentage
             min_avg = minimum_averages[core_index]
-            min_pct_str = f'{(min_avg / maximum_frequency * 100):>3.0f}%' if min_avg is not None else ' ---'
+            min_pct_str = f'{(min_avg / maximum_frequency * 100):>3.0f}%' if min_avg is not None else '---'
 
             # Format the line with fixed width to ensure straight right border
-            content_text = f'  {core_index:<2}  {average_freq:>4.0f} {frequency_percentage:>3.0f}% {min_pct_str} '
+            content_text = f'  {core_index:<2} {average_freq:>4.0f} {frequency_percentage:>2.0f}% {usage_percentage:>5.1f}%  {min_pct_str} '
             padding_needed = box_width - 2 - len(content_text)  # -2 for the │ characters
-            frequency_line = '│' + content_text + ' ' * padding_needed + '│'
+            info_line = '│' + content_text + ' ' * padding_needed + '│'
 
             line_y = box_y + 3 + core_index
             if line_y < screen_height:
-                screen.addstr(line_y, box_x, frequency_line, text_color)
+                # Choose color based on usage level
+                if usage_percentage > CPU_USAGE_HIGH_THRESHOLD:
+                    line_color = curses.color_pair(2)  # Red for high usage
+                elif usage_percentage > CPU_USAGE_WARNING_THRESHOLD:
+                    line_color = curses.color_pair(6) | curses.A_BOLD  # Bold yellow for warning
+                else:
+                    line_color = text_color  # Normal color
+                    
+                screen.addstr(line_y, box_x, info_line, line_color)
 
         # Draw the bottom border
         bottom_border = '└' + '─' * (box_width - 2) + '┘'
@@ -200,16 +268,26 @@ def draw_statistics_box(screen, box_position, average_frequencies, maximum_frequ
             screen.addstr(bottom_y, box_x, bottom_border, box_color)
 
 
-def draw_alert_banner(screen, screen_width):
+def draw_alert_banner(screen, screen_width, alert_type):
     """
-    Draw the warning banner at the top when throttling is detected.
+    Draw the warning banner at the top based on alert type.
 
     Args:
         screen: The curses screen object
         screen_width: Width of the terminal screen
+        alert_type: String describing the type of alert to display
     """
-    # The warning message to display
-    warning_message = ' ⚠  THROTTLING: avg freq below 50% of max ⚠ '
+    # Generate warning message based on alert type
+    if alert_type == "throttling":
+        warning_message = ' ⚠  THROTTLING: avg freq below 50% of max ⚠ '
+    elif alert_type.startswith("high_usage_"):
+        cores = alert_type.split('_')[2]
+        warning_message = f' ⚠  HIGH CPU LOAD: {cores} cores >90% usage ⚠ '
+    elif alert_type.startswith("warning_usage_"):
+        cores = alert_type.split('_')[2]
+        warning_message = f' ⚠  CPU WARNING: {cores} cores >70% usage ⚠ '
+    else:
+        warning_message = ' ⚠  CPU ALERT DETECTED ⚠ '
 
     # Center the message on the screen
     banner_x = max(0, (screen_width - len(warning_message)) // 2)
@@ -309,26 +387,26 @@ def draw_frequency_graphs(screen, graph_area, frequency_histories, current_frequ
             screen.addstr(core_y_position, freq_display_x, frequency_display, label_color)
 
 
-def main_display_loop(screen, frequency_histories, maximum_frequency, minimum_averages):
+def main_display_loop(screen, frequency_histories, usage_histories, maximum_frequency, minimum_averages):
     """
-    Main display loop that continuously updates the frequency monitor.
+    Main display loop that continuously updates the CPU monitor.
 
     This is the core loop that:
-    1. Reads current CPU frequencies
-    2. Updates frequency histories
-    3. Detects throttling conditions
+    1. Reads current CPU frequencies and usage
+    2. Updates frequency and usage histories
+    3. Detects alert conditions (throttling, high usage)
     4. Draws the complete interface
     5. Sleeps until next update
 
     Args:
         screen: The curses screen object
         frequency_histories: List of deque objects for storing frequency history
+        usage_histories: List of deque objects for storing usage history
         maximum_frequency: Maximum frequency capability of the CPU
         minimum_averages: List to track minimum average frequencies after window is full
     """
     # Set up colors for the terminal display
     setup_terminal_colors()
-
 
     number_of_cores = len(frequency_histories)
 
@@ -336,12 +414,14 @@ def main_display_loop(screen, frequency_histories, maximum_frequency, minimum_av
     # MAIN DISPLAY LOOP - This runs continuously until the user exits
     # ========================================================================
     while True:
-        # Step 1: Get the current frequency of each CPU core
+        # Step 1: Get the current frequency and usage of each CPU core
         current_frequencies, _ = get_cpu_frequencies()
+        current_usage = get_cpu_usage()
 
-        # Step 2: Add the new frequency readings to our history
+        # Step 2: Add the new frequency and usage readings to our history
         for core_index, current_frequency in enumerate(current_frequencies):
             frequency_histories[core_index].append(current_frequency)
+            usage_histories[core_index].append(current_usage[core_index])
 
         # Step 2.5: Update minimum average frequencies (start tracking immediately)
         for core_index, core_history in enumerate(frequency_histories):
@@ -360,20 +440,20 @@ def main_display_loop(screen, frequency_histories, maximum_frequency, minimum_av
         # Step 4: Get current screen dimensions
         screen_height, screen_width = screen.getmaxyx()
 
-        # Step 5: Check if we should trigger throttling alerts
-        is_throttling, average_frequencies = detect_throttling_alert(
-            frequency_histories, maximum_frequency
+        # Step 5: Check for alert conditions (throttling, high usage)
+        alert_active, alert_type, average_frequencies, average_usage = detect_alerts(
+            frequency_histories, usage_histories, maximum_frequency
         )
 
         # Step 6: Set background color for alert mode
-        if is_throttling:
+        if alert_active:
             # Red background during alerts
             screen.bkgd(' ', curses.color_pair(3))
 
         # Step 7: Calculate layout dimensions
 
-        # Statistics box (right side of screen)
-        stats_box_width = 35
+        # Statistics box (right side of screen) - wider to accommodate usage column
+        stats_box_width = 42
         stats_box_x = screen_width - stats_box_width - 1
         stats_box_height = number_of_cores + 4  # cores + header + borders
         stats_box_y = (screen_height - stats_box_height) // 2  # center vertically
@@ -391,14 +471,15 @@ def main_display_loop(screen, frequency_histories, maximum_frequency, minimum_av
             screen,
             (stats_box_x, stats_box_y, stats_box_width, stats_box_height),
             average_frequencies,
+            average_usage,
             maximum_frequency,
-            is_throttling,
+            alert_active,
             minimum_averages
         )
 
-        # Draw the alert banner if we're in throttling mode
-        if is_throttling:
-            draw_alert_banner(screen, screen_width)
+        # Draw the alert banner if we're in alert mode
+        if alert_active:
+            draw_alert_banner(screen, screen_width, alert_type)
 
         # Draw the frequency graphs for each core
         draw_frequency_graphs(
@@ -407,7 +488,7 @@ def main_display_loop(screen, frequency_histories, maximum_frequency, minimum_av
             frequency_histories,
             current_frequencies,
             maximum_frequency,
-            is_throttling,
+            alert_active,
             stats_box_width  # Pass box width so graphs don't overlap
         )
 
@@ -445,14 +526,26 @@ def main():
 
     # Determine how many CPU cores we're monitoring
     number_of_cores = len(initial_frequencies)
-    print(f"Starting CPU frequency monitor for {number_of_cores} cores...")
+    print(f"Starting CPU monitor for {number_of_cores} cores...")
     print(f"Maximum frequency: {maximum_frequency:.0f} MHz")
+    print(f"Monitoring: Frequency & CPU Usage")
+    
+    # Initialize CPU usage monitoring (required for accurate measurements)
+    print("Initializing CPU usage monitoring...")
+    psutil.cpu_percent(percpu=True)  # Baseline call - discarded
+    time.sleep(0.5)  # Short wait to establish baseline
+    
     print(f"Press Ctrl+C to exit")
     print("")
 
     # Create history storage for each core
     # Each deque will automatically maintain only the most recent HISTORY_SECONDS values
     frequency_histories = [
+        deque(maxlen=HISTORY_SECONDS) for _ in range(number_of_cores)
+    ]
+    
+    # Create usage history storage for each core
+    usage_histories = [
         deque(maxlen=HISTORY_SECONDS) for _ in range(number_of_cores)
     ]
     
@@ -463,7 +556,7 @@ def main():
     # curses.wrapper handles terminal setup/cleanup automatically
     try:
         curses.wrapper(
-            lambda screen: main_display_loop(screen, frequency_histories, maximum_frequency, minimum_averages)
+            lambda screen: main_display_loop(screen, frequency_histories, usage_histories, maximum_frequency, minimum_averages)
         )
     except KeyboardInterrupt:
         # User pressed Ctrl+C - exit gracefully
