@@ -38,6 +38,10 @@ THROTTLING_ALERT_THRESHOLD = 0.50
 CPU_USAGE_WARNING_THRESHOLD = 70  # % - warn when core usage exceeds this
 CPU_USAGE_HIGH_THRESHOLD = 90     # % - alert when core usage exceeds this
 
+# CPU temperature alert thresholds
+TEMPERATURE_WARNING_THRESHOLD = 80   # °C - warn when core temperature exceeds this
+TEMPERATURE_CRITICAL_THRESHOLD = 90  # °C - alert when core temperature exceeds this
+
 # ============================================================================
 # CORE FUNCTIONS - CPU Frequency Reading
 # ============================================================================
@@ -86,6 +90,69 @@ def get_cpu_usage():
     # Get CPU usage for each core with a brief interval for accurate measurement
     current_usage = psutil.cpu_percent(percpu=True, interval=0.1)
     return current_usage
+
+
+def get_cpu_temperatures():
+    """
+    Retrieve current CPU temperatures for all cores.
+
+    Uses psutil to read temperature sensor data from various sources including
+    Intel coretemp sensors and AMD k10temp sensors. Extracts per-core temperatures
+    and returns them in a consistent format.
+
+    Returns:
+        list or None: List of current temperatures in °C for each core, or None if
+                     no temperature sensors are available or accessible
+
+    Raises:
+        None: Function handles all exceptions gracefully and returns None on error
+    """
+    try:
+        # Get all available temperature sensors
+        sensor_data = psutil.sensors_temperatures()
+        
+        if not sensor_data:
+            # No temperature sensors available on this system
+            return None
+        
+        core_temps = []
+        
+        # Try Intel coretemp sensors first (most common)
+        if 'coretemp' in sensor_data:
+            for sensor in sensor_data['coretemp']:
+                # Look for individual core temperatures (skip package/socket temps)
+                if sensor.label and 'Core' in sensor.label:
+                    temp = sensor.current
+                    # Validate temperature is reasonable (0-150°C)
+                    if 0 <= temp <= 150:
+                        core_temps.append(temp)
+        
+        # Try AMD k10temp sensors if coretemp not available or insufficient
+        elif 'k10temp' in sensor_data:
+            for sensor in sensor_data['k10temp']:
+                # AMD sensors may have different label patterns
+                if sensor.label:
+                    temp = sensor.current
+                    # Validate temperature range
+                    if 0 <= temp <= 150:
+                        core_temps.append(temp)
+        
+        # Try other common sensor names
+        else:
+            # Look for any other temperature sensors
+            for sensor_name, sensors in sensor_data.items():
+                for sensor in sensors:
+                    if sensor.label and sensor.current:
+                        temp = sensor.current
+                        if 0 <= temp <= 150:
+                            core_temps.append(temp)
+        
+        # Return the core temperatures, or None if none found
+        return core_temps if core_temps else None
+        
+    except Exception:
+        # Handle any psutil errors gracefully (permissions, missing sensors, etc.)
+        return None
 
 # ============================================================================
 # HELPER FUNCTIONS - Alert Detection and Statistics
