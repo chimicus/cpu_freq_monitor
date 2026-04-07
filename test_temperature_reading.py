@@ -32,9 +32,10 @@ class TestTemperatureReading(unittest.TestCase):
             # This function doesn't exist yet - should fail
             temps = cpu_freq_monitor.get_cpu_temperatures()
             
-            # Expected: function should return per-core temperatures
-            self.assertEqual(len(temps), 4)  # 4 cores
-            self.assertEqual(temps, [60.0, 62.0, 58.0, 61.0])
+            # Expected: function should return temperatures for all logical cores
+            # With hyperthreading, this maps to 8 logical cores (2 per physical core)
+            self.assertEqual(len(temps), 8)  # 8 logical cores
+            self.assertEqual(temps, [60.0, 60.0, 62.0, 62.0, 58.0, 58.0, 61.0, 61.0])
 
     def test_get_cpu_temperatures_with_k10temp_sensors(self):
         """Test reading temperatures from k10temp sensors (AMD)."""
@@ -75,7 +76,14 @@ class TestTemperatureReading(unittest.TestCase):
 
     def test_get_cpu_temperatures_returns_reasonable_values(self):
         """Test that returned temperatures are within reasonable range."""
-        with patch('cpu_freq_monitor.psutil.sensors_temperatures') as mock_sensors:
+        with patch('cpu_freq_monitor.psutil.sensors_temperatures') as mock_sensors, \
+             patch('cpu_freq_monitor.psutil.cpu_count') as mock_cpu_count:
+            
+            # Mock 4 logical cores from 2 physical cores
+            def cpu_count_side_effect(logical=True):
+                return 4 if logical else 2
+            mock_cpu_count.side_effect = cpu_count_side_effect
+            
             mock_sensors.return_value = {
                 'coretemp': [
                     MagicMock(label='Core 0', current=45.5),
@@ -86,11 +94,13 @@ class TestTemperatureReading(unittest.TestCase):
             
             temps = cpu_freq_monitor.get_cpu_temperatures()
             
-            # Function should validate temperature ranges
+            # Function should validate temperature ranges and map to logical cores
             self.assertIsNotNone(temps)
+            self.assertEqual(len(temps), 4)  # 4 logical cores
             for temp in temps:
-                self.assertGreaterEqual(temp, 0)    # No negative temps
-                self.assertLessEqual(temp, 150)     # Reasonable max
+                if temp is not None:  # Allow None for invalid readings
+                    self.assertGreaterEqual(temp, 0)    # No negative temps
+                    self.assertLessEqual(temp, 150)     # Reasonable max
 
     def test_temperature_constants_exist(self):
         """Test that temperature threshold constants are defined."""
@@ -114,7 +124,8 @@ class TestTemperatureReading(unittest.TestCase):
         """Test that temperature reading works alongside existing functions."""
         with patch('cpu_freq_monitor.psutil.sensors_temperatures') as mock_temps, \
              patch('cpu_freq_monitor.psutil.cpu_freq') as mock_freq, \
-             patch('cpu_freq_monitor.psutil.cpu_percent') as mock_usage:
+             patch('cpu_freq_monitor.psutil.cpu_percent') as mock_usage, \
+             patch('cpu_freq_monitor.psutil.cpu_count') as mock_cpu_count:
             
             # Mock all three data sources
             mock_freq_obj = MagicMock()
@@ -128,15 +139,20 @@ class TestTemperatureReading(unittest.TestCase):
                     MagicMock(label='Core 1', current=68.0),
                 ]
             }
+            # Mock CPU topology for temperature mapping
+            def cpu_count_side_effect(logical=True):
+                return 4 if logical else 2  # 4 logical, 2 physical cores
+            mock_cpu_count.side_effect = cpu_count_side_effect
             
             # All three should work independently
             freqs, max_freq = cpu_freq_monitor.get_cpu_frequencies()
             usage = cpu_freq_monitor.get_cpu_usage()
-            temps = cpu_freq_monitor.get_cpu_temperatures()  # This will fail
+            temps = cpu_freq_monitor.get_cpu_temperatures()
             
             self.assertEqual(freqs, [2500.0, 2500.0])
             self.assertEqual(usage, [25.0, 30.0])
-            self.assertEqual(temps, [65.0, 68.0])
+            # With 2 physical cores mapped to 4 logical cores
+            self.assertEqual(temps, [65.0, 65.0, 68.0, 68.0])
 
     def test_simple_temperature_display_format(self):
         """Test basic temperature display formatting."""
