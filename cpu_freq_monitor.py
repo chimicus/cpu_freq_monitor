@@ -42,6 +42,13 @@ CPU_USAGE_HIGH_THRESHOLD = 90     # % - alert when core usage exceeds this
 TEMPERATURE_WARNING_THRESHOLD = 80   # °C - warn when core temperature exceeds this
 TEMPERATURE_CRITICAL_THRESHOLD = 90  # °C - alert when core temperature exceeds this
 
+# Temperature graph scale (fixed range for consistent visualization)
+TEMPERATURE_SCALE_MIN = 40.0  # °C - minimum temperature for graph scale
+TEMPERATURE_SCALE_MAX = 100.0 # °C - maximum temperature for graph scale
+
+# Layout constants for triple graph display
+ROWS_PER_CORE_WITH_TEMPERATURE = 3  # Frequency + Usage + Temperature lines per core
+
 # ============================================================================
 # CORE FUNCTIONS - CPU Frequency Reading
 # ============================================================================
@@ -404,9 +411,90 @@ def draw_alert_banner(screen, screen_width, alert_type):
     screen.addstr(0, banner_x, warning_message, alert_style)
 
 
-def draw_frequency_graphs(screen, graph_area, frequency_histories, current_frequencies, usage_histories, current_usage, maximum_frequency, is_alert_mode, stats_box_width):
+# ============================================================================
+# TEMPERATURE GRAPH HELPER FUNCTIONS
+# ============================================================================
+
+def temperature_to_graph_index(temperature):
     """
-    Draw the real-time frequency and usage graphs for each CPU core.
+    Convert a temperature value to a graph character index (0-7).
+    
+    Maps temperatures from 40-100°C to Unicode bar character indices.
+    Values outside range are clamped to 0-7.
+    
+    Args:
+        temperature: Temperature in Celsius
+    
+    Returns:
+        int: Index from 0-7 for Unicode bar characters ▁▂▃▄▅▆▇█
+    """
+    if temperature is None:
+        return 0  # Minimum character for None values
+    
+    # Clamp temperature to scale range
+    clamped_temp = max(TEMPERATURE_SCALE_MIN, min(TEMPERATURE_SCALE_MAX, temperature))
+    
+    # Convert to 0-1 range
+    temp_range = TEMPERATURE_SCALE_MAX - TEMPERATURE_SCALE_MIN
+    normalized = (clamped_temp - TEMPERATURE_SCALE_MIN) / temp_range
+    
+    # Convert to 0-7 index
+    return int(normalized * 7)
+
+def get_temperature_graph_characters():
+    """
+    Get the Unicode characters used for temperature graphs.
+    
+    Returns:
+        list: Unicode bar characters from low to high
+    """
+    return ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█']
+
+def temperature_history_to_graph(temperature_history):
+    """
+    Convert a deque of temperature readings to a graph string.
+    
+    Args:
+        temperature_history: deque of temperature values (floats or None)
+    
+    Returns:
+        str: String of Unicode bar characters representing temperature history
+    """
+    if not temperature_history:
+        return ""
+    
+    chars = get_temperature_graph_characters()
+    graph_string = ""
+    
+    for temp in temperature_history:
+        char_index = temperature_to_graph_index(temp)
+        graph_string += chars[char_index]
+    
+    return graph_string
+
+def get_temperature_graph_color(alert_active=False):
+    """
+    Get the appropriate color for temperature graphs.
+    
+    Args:
+        alert_active: Whether we're in alert mode
+    
+    Returns:
+        int: Curses color pair number
+    """
+    if alert_active:
+        return 3  # Red color pair
+    else:
+        return 4  # Cyan color pair
+
+
+# ============================================================================
+# GRAPH DRAWING FUNCTIONS  
+# ============================================================================
+
+def draw_frequency_graphs(screen, graph_area, frequency_histories, current_frequencies, usage_histories, current_usage, temperature_histories, current_temperatures, maximum_frequency, is_alert_mode, stats_box_width):
+    """
+    Draw the real-time frequency, usage, and temperature graphs for each CPU core.
 
     Args:
         screen: The curses screen object
@@ -415,6 +503,8 @@ def draw_frequency_graphs(screen, graph_area, frequency_histories, current_frequ
         current_frequencies: List of current frequency values
         usage_histories: List of deque objects with usage history
         current_usage: List of current usage percentages
+        temperature_histories: List of deque objects with temperature history
+        current_temperatures: List of current temperature values (or None)
         maximum_frequency: Maximum frequency capability
         is_alert_mode: Whether we're in alert mode (affects colors)
     """
@@ -424,28 +514,31 @@ def draw_frequency_graphs(screen, graph_area, frequency_histories, current_frequ
     # Unicode block characters for drawing the frequency bars (low to high)
     frequency_bars = '▁▂▃▄▅▆▇█'
 
-    # Calculate how many rows each core gets for its graphs (frequency + usage = 2 lines)
-    rows_per_core = max(2, graph_height // number_of_cores)
+    # Calculate how many rows each core gets for its graphs (frequency + usage + temperature = 3 lines)
+    rows_per_core = max(ROWS_PER_CORE_WITH_TEMPERATURE, graph_height // number_of_cores)
 
     # Choose graph colors based on alert mode
     if is_alert_mode:
         freq_graph_color = curses.color_pair(2)  # Red during alerts
         usage_graph_color = curses.color_pair(2)  # Red during alerts
+        temp_graph_color = curses.color_pair(2)   # Red during alerts
         label_color = curses.color_pair(4)  # White on red during alerts
     else:
         freq_graph_color = curses.color_pair(1)  # Green for frequency
         usage_graph_color = curses.color_pair(5)  # Cyan for usage
+        temp_graph_color = curses.color_pair(4)   # Cyan for temperature (different shade)
         label_color = curses.color_pair(6)  # Yellow normally
 
-    # Draw frequency and usage graphs for each CPU core
+    # Draw frequency, usage, and temperature graphs for each CPU core
     for core_index, core_freq_history in enumerate(frequency_histories):
-        # Calculate the vertical position for this core's graphs (frequency + usage)
+        # Calculate the vertical position for this core's graphs (frequency + usage + temperature)
         freq_y_position = graph_y + core_index * rows_per_core
         usage_y_position = freq_y_position + 1
+        temp_y_position = freq_y_position + 2
 
         # Skip if this would go off the bottom of the screen
         screen_height, screen_width = screen.getmaxyx()
-        if usage_y_position >= screen_height - 1:
+        if temp_y_position >= screen_height - 1:
             break
 
         # Draw the core label on the frequency line (e.g., "C0 ")
@@ -455,15 +548,32 @@ def draw_frequency_graphs(screen, graph_area, frequency_histories, current_frequ
         # Draw usage indicator on the usage line
         usage_label = '   U'
         screen.addstr(usage_y_position, graph_x, usage_label, label_color)
+        
+        # Draw temperature indicator on the temperature line
+        temp_label = '   T'
+        screen.addstr(temp_y_position, graph_x, temp_label, label_color)
 
         # Calculate how much horizontal space we have for the graphs
         frequency_display_sample = f' {current_frequencies[core_index]:>7.0f}/{maximum_frequency:.0f} MHz'
         usage_display_sample = f' {current_usage[core_index]:>5.1f}%'
+        
+        # Temperature display (handle None values)
+        current_temp = None
+        if (current_temperatures and core_index < len(current_temperatures) and 
+            current_temperatures[core_index] is not None):
+            current_temp = current_temperatures[core_index]
+            temp_display_sample = f' {current_temp:>3.0f}°C'
+        else:
+            temp_display_sample = f' N/A '
+            
         space_needed_for_freq_display = len(frequency_display_sample)
         space_needed_for_usage_display = len(usage_display_sample)
+        space_needed_for_temp_display = len(temp_display_sample)
 
-        # Use the larger of the two display widths for consistent alignment
-        space_needed_for_display = max(space_needed_for_freq_display, space_needed_for_usage_display)
+        # Use the largest of the three display widths for consistent alignment
+        space_needed_for_display = max(space_needed_for_freq_display, 
+                                     space_needed_for_usage_display,
+                                     space_needed_for_temp_display)
         
         # Calculate actual available width for the graph bars
         available_graph_width = (graph_width - len(core_label) - 
@@ -502,9 +612,29 @@ def draw_frequency_graphs(screen, graph_area, frequency_histories, current_frequ
                 bar_x_position >= 0):
                 screen.addstr(usage_y_position, bar_x_position, bar_character, usage_graph_color)
 
+        # TEMPERATURE GRAPH - Get the most recent temperature samples
+        if temperature_histories and core_index < len(temperature_histories):
+            core_temp_history = temperature_histories[core_index]
+            recent_temp_samples = list(core_temp_history)[-available_graph_width:]
+            padding_needed = available_graph_width - len(recent_temp_samples)
+
+            # Draw the temperature history as bars
+            for sample_index, temp_sample in enumerate(recent_temp_samples):
+                bar_x_position = graph_x + len(temp_label) + padding_needed + sample_index
+                
+                # Convert temperature to graph index using our helper function
+                bar_character_index = temperature_to_graph_index(temp_sample)
+                bar_character = frequency_bars[bar_character_index]
+
+                if (bar_x_position < graph_width and 
+                    temp_y_position < screen_height - 1 and 
+                    bar_x_position >= 0):
+                    screen.addstr(temp_y_position, bar_x_position, bar_character, temp_graph_color)
+
         # Draw current values after the graphs
         freq_display_x = len(core_label) + available_graph_width + 1
         usage_display_x = len(usage_label) + available_graph_width + 1
+        temp_display_x = len(temp_label) + available_graph_width + 1
 
         # Draw frequency display
         current_freq = current_frequencies[core_index]
@@ -518,6 +648,11 @@ def draw_frequency_graphs(screen, graph_area, frequency_histories, current_frequ
         if (usage_display_x + len(usage_display) < screen_width and 
             usage_y_position < screen_height - 1):
             screen.addstr(usage_y_position, usage_display_x, usage_display, label_color)
+
+        # Draw temperature display
+        if (temp_display_x + len(temp_display_sample) < screen_width and 
+            temp_y_position < screen_height - 1):
+            screen.addstr(temp_y_position, temp_display_x, temp_display_sample, label_color)
 
 
 def main_display_loop(screen, frequency_histories, usage_histories, temperature_histories, maximum_frequency, minimum_averages):
@@ -647,7 +782,7 @@ def main_display_loop(screen, frequency_histories, usage_histories, temperature_
         if alert_active:
             draw_alert_banner(screen, screen_width, alert_type)
 
-        # Draw the frequency and usage graphs for each core
+        # Draw the frequency, usage, and temperature graphs for each core
         draw_frequency_graphs(
             screen,
             (graph_area_x, graph_area_y, graph_area_width, graph_area_height),
@@ -655,6 +790,8 @@ def main_display_loop(screen, frequency_histories, usage_histories, temperature_
             current_frequencies,
             usage_histories,
             current_usage,
+            temperature_histories,
+            current_temperatures,
             maximum_frequency,
             alert_active,
             stats_box_width  # Pass box width so graphs don't overlap

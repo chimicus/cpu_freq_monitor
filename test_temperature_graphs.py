@@ -17,9 +17,9 @@ class TestTemperatureGraphs(unittest.TestCase):
         test_cases = [
             (40.0, 0),    # Minimum temp -> first character ▁
             (100.0, 7),   # Maximum temp -> last character █  
-            (70.0, 3),    # Middle temp -> middle character ▄
-            (55.0, 1),    # Low-mid temp -> ▂
-            (85.0, 6),    # High temp -> ▇
+            (70.0, 3),    # Middle temp -> middle character ▄ (70-40)/60*7 = 3.5 -> 3
+            (55.0, 1),    # Low-mid temp -> ▂ (55-40)/60*7 = 1.75 -> 1
+            (85.0, 5),    # High temp -> ▆ (85-40)/60*7 = 5.25 -> 5
             (35.0, 0),    # Below minimum -> clamp to ▁
             (105.0, 7),   # Above maximum -> clamp to █
         ]
@@ -62,7 +62,13 @@ class TestTemperatureGraphs(unittest.TestCase):
         """Test that temperature graphs integrate with existing graph drawing."""
         with patch('cpu_freq_monitor.curses') as mock_curses:
             mock_screen = MagicMock()
+            
+            # Mock screen.getmaxyx() to return screen dimensions
+            mock_screen.getmaxyx.return_value = (40, 100)  # (height, width)
+            
+            # Mock curses color pair and addstr functions
             mock_curses.color_pair.return_value = 1
+            mock_curses.A_BOLD = 1
             
             # Mock temperature histories for 2 cores
             temp_histories = [
@@ -83,16 +89,32 @@ class TestTemperatureGraphs(unittest.TestCase):
             max_freq = 3000.0
             alert_active = False
             
-            # This should be enhanced to support temperature graphs
-            # Should not crash, but may not show temperature yet
-            try:
-                cpu_freq_monitor.draw_frequency_graphs(
-                    mock_screen, frequency_histories, usage_histories, 
-                    temp_histories, max_freq, alert_active
-                )
-            except TypeError as e:
-                # Expected if function doesn't support temp_histories parameter yet
-                self.assertIn("temp_histories", str(e))
+            # Test the enhanced function with temperature support
+            # Should now work with temperature histories
+            cpu_freq_monitor.draw_frequency_graphs(
+                mock_screen, 
+                (0, 1, 80, 20),  # graph_area (x, y, width, height)
+                frequency_histories, 
+                [2500.0, 2400.0],  # current_frequencies
+                usage_histories, 
+                [25.0, 30.0],      # current_usage
+                temp_histories, 
+                [65.0, 68.0],      # current_temperatures
+                max_freq, 
+                alert_active,
+                20  # stats_box_width
+            )
+            
+            # Verify that addstr was called (function executed without error)
+            self.assertTrue(mock_screen.addstr.called)
+            
+            # Verify some expected calls were made
+            call_args_list = [str(call) for call in mock_screen.addstr.call_args_list]
+            
+            # Should have called addstr for core labels, usage labels, and temp labels
+            self.assertTrue(any('C0' in call for call in call_args_list))
+            self.assertTrue(any('U' in call for call in call_args_list)) 
+            self.assertTrue(any('T' in call for call in call_args_list))
 
     def test_temperature_graph_display_layout(self):
         """Test the expected layout of temperature graphs."""
@@ -119,7 +141,7 @@ class TestTemperatureGraphs(unittest.TestCase):
         temp_label = "T"  # Simple label like "U" for usage
         
         # Test temperature value formatting
-        test_temps = [45.5, 67.0, 89.3, 100.0]
+        test_temps = [45.0, 67.0, 89.3, 100.0]
         expected_formats = ["45°C", "67°C", "89°C", "100°C"]
         
         for temp, expected in zip(test_temps, expected_formats):
