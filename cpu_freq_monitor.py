@@ -94,14 +94,14 @@ def get_cpu_usage():
 
 def get_cpu_temperatures():
     """
-    Retrieve current CPU temperatures for all cores.
+    Retrieve current CPU temperatures for all logical cores.
 
-    Uses psutil to read temperature sensor data from various sources including
-    Intel coretemp sensors and AMD k10temp sensors. Extracts per-core temperatures
-    and returns them in a consistent format.
+    Uses psutil to read temperature sensor data from physical cores and maps them
+    to logical cores. For hyperthreaded systems, each physical core temperature
+    is applied to both logical cores (e.g., physical core 0 → logical cores 0,1).
 
     Returns:
-        list or None: List of current temperatures in °C for each core, or None if
+        list or None: List of current temperatures in °C for each logical core, or None if
                      no temperature sensors are available or accessible
 
     Raises:
@@ -115,7 +115,7 @@ def get_cpu_temperatures():
             # No temperature sensors available on this system
             return None
         
-        core_temps = []
+        physical_core_temps = []
         
         # Try Intel coretemp sensors first (most common)
         if 'coretemp' in sensor_data:
@@ -125,7 +125,7 @@ def get_cpu_temperatures():
                     temp = sensor.current
                     # Validate temperature is reasonable (0-150°C)
                     if 0 <= temp <= 150:
-                        core_temps.append(temp)
+                        physical_core_temps.append(temp)
         
         # Try AMD k10temp sensors if coretemp not available or insufficient
         elif 'k10temp' in sensor_data:
@@ -135,7 +135,7 @@ def get_cpu_temperatures():
                     temp = sensor.current
                     # Validate temperature range
                     if 0 <= temp <= 150:
-                        core_temps.append(temp)
+                        physical_core_temps.append(temp)
         
         # Try other common sensor names
         else:
@@ -145,10 +145,36 @@ def get_cpu_temperatures():
                     if sensor.label and sensor.current:
                         temp = sensor.current
                         if 0 <= temp <= 150:
-                            core_temps.append(temp)
+                            physical_core_temps.append(temp)
         
-        # Return the core temperatures, or None if none found
-        return core_temps if core_temps else None
+        if not physical_core_temps:
+            return None
+        
+        # Map physical core temperatures to logical cores  
+        # Get CPU topology info
+        logical_core_count = psutil.cpu_count(logical=True)
+        physical_core_count = psutil.cpu_count(logical=False)
+        
+        if logical_core_count and physical_core_count:
+            logical_cores_per_physical = logical_core_count // physical_core_count
+        else:
+            # Fallback: assume no hyperthreading
+            logical_cores_per_physical = 1
+        
+        # Create temperature mapping for all logical cores
+        logical_core_temps = []
+        for logical_core_index in range(logical_core_count):
+            # Calculate which physical core this logical core belongs to
+            physical_core_index = logical_core_index // logical_cores_per_physical
+            
+            # If we have temperature data for this physical core, use it
+            if physical_core_index < len(physical_core_temps):
+                logical_core_temps.append(physical_core_temps[physical_core_index])
+            else:
+                # No temperature data available for this physical core
+                logical_core_temps.append(None)
+        
+        return logical_core_temps
         
     except Exception:
         # Handle any psutil errors gracefully (permissions, missing sensors, etc.)
@@ -202,8 +228,7 @@ def detect_alerts(frequency_histories, usage_histories, maximum_frequency):
     throttling_threshold = maximum_frequency * THROTTLING_ALERT_THRESHOLD
     is_throttling = any(avg < throttling_threshold for avg in average_frequencies)
 
-    # Check for high CPU usage
-    high_usage_cores = sum(1 for avg in average_usage if avg > CPU_USAGE_HIGH_THRESHOLD)
+    # Check for warning-level CPU usage only (removed high usage alerts per user request)
     warning_usage_cores = sum(1 for avg in average_usage if avg > CPU_USAGE_WARNING_THRESHOLD)
 
     # Determine primary alert type (prioritize critical conditions)
@@ -213,9 +238,6 @@ def detect_alerts(frequency_histories, usage_histories, maximum_frequency):
     if is_throttling:
         alert_active = True
         alert_type = "throttling"
-    elif high_usage_cores > 0:
-        alert_active = True
-        alert_type = f"high_usage_{high_usage_cores}_cores"
     elif warning_usage_cores > 0:
         alert_active = True
         alert_type = f"warning_usage_{warning_usage_cores}_cores"
@@ -257,15 +279,16 @@ def setup_terminal_colors():
     curses.init_pair(6, curses.COLOR_YELLOW, -1)
 
 
-def draw_statistics_box(screen, box_position, average_frequencies, average_usage, maximum_frequency, is_alert_mode, minimum_averages):
+def draw_statistics_box(screen, box_position, average_frequencies, average_usage, average_temperatures, maximum_frequency, is_alert_mode, minimum_averages):
     """
-    Draw the statistics box showing frequency and usage averages.
+    Draw the statistics box showing frequency, usage, and temperature averages.
 
     Args:
         screen: The curses screen object
         box_position: Tuple of (x, y, width, height) for box placement
         average_frequencies: List of average frequencies for each core
         average_usage: List of average usage percentages for each core
+        average_temperatures: List of average temperatures for each core (or None if unavailable)
         maximum_frequency: Maximum frequency capability
         is_alert_mode: Whether we're currently in alert mode (affects colors)
         minimum_averages: List of minimum average frequencies for each core (None until window is full)
@@ -289,8 +312,8 @@ def draw_statistics_box(screen, box_position, average_frequencies, average_usage
         top_border = '┌' + '─' * (box_width - 2) + '┐'
         screen.addstr(box_y, box_x, top_border, box_color)
 
-        # Draw the header line - make it exactly box_width characters
-        header_text = ' Core  Freq  %  Usage%  Min% '
+        # Draw the header line - make it exactly box_width characters  
+        header_text = ' Core  Freq  %  Usage%  Temp  Min% '
         padding_needed = box_width - 2 - len(header_text)  # -2 for the │ characters
         header = '│' + header_text + ' ' * padding_needed + '│'
         screen.addstr(box_y + 1, box_x, header, box_color)
@@ -299,7 +322,7 @@ def draw_statistics_box(screen, box_position, average_frequencies, average_usage
         separator = '├' + '─' * (box_width - 2) + '┤'
         screen.addstr(box_y + 2, box_x, separator, box_color)
 
-        # Draw frequency and usage info for each core
+        # Draw frequency, usage, and temperature info for each core
         for core_index, average_freq in enumerate(average_frequencies):
             # Calculate what percentage this represents of maximum frequency
             frequency_percentage = (average_freq / maximum_frequency) * 100
@@ -307,24 +330,44 @@ def draw_statistics_box(screen, box_position, average_frequencies, average_usage
             # Get usage percentage for this core
             usage_percentage = average_usage[core_index]
             
+            # Get temperature for this core
+            if average_temperatures and core_index < len(average_temperatures):
+                temp_value = average_temperatures[core_index]
+                if temp_value is not None:
+                    temp_str = f'{temp_value:>3.0f}°C'
+                else:
+                    temp_str = ' N/A '
+            else:
+                temp_str = ' N/A '
+            
             # Get minimum average frequency for this core and convert to percentage
             min_avg = minimum_averages[core_index]
             min_pct_str = f'{(min_avg / maximum_frequency * 100):>3.0f}%' if min_avg is not None else '---'
 
             # Format the line with fixed width to ensure straight right border
-            content_text = f'  {core_index:<2} {average_freq:>4.0f} {frequency_percentage:>2.0f}% {usage_percentage:>5.1f}%  {min_pct_str} '
+            content_text = f'  {core_index:<2} {average_freq:>4.0f} {frequency_percentage:>2.0f}% {usage_percentage:>5.1f}% {temp_str} {min_pct_str} '
             padding_needed = box_width - 2 - len(content_text)  # -2 for the │ characters
             info_line = '│' + content_text + ' ' * padding_needed + '│'
 
             line_y = box_y + 3 + core_index
             if line_y < screen_height:
-                # Choose color based on usage level
-                if usage_percentage > CPU_USAGE_HIGH_THRESHOLD:
-                    line_color = curses.color_pair(2)  # Red for high usage
-                elif usage_percentage > CPU_USAGE_WARNING_THRESHOLD:
-                    line_color = curses.color_pair(6) | curses.A_BOLD  # Bold yellow for warning
+                # Choose color based on the most critical alert condition
+                if average_temperatures and core_index < len(average_temperatures):
+                    temp_value = average_temperatures[core_index]
+                    if temp_value is not None and temp_value >= TEMPERATURE_CRITICAL_THRESHOLD:
+                        line_color = curses.color_pair(2) | curses.A_BOLD  # Bold red for critical temp
+                    elif temp_value is not None and temp_value >= TEMPERATURE_WARNING_THRESHOLD:
+                        line_color = curses.color_pair(2)  # Red for warning temp
+                    elif usage_percentage > CPU_USAGE_WARNING_THRESHOLD:
+                        line_color = curses.color_pair(6) | curses.A_BOLD  # Bold yellow for warning usage
+                    else:
+                        line_color = text_color  # Normal color
                 else:
-                    line_color = text_color  # Normal color
+                    # No temperature data, fall back to usage-based coloring
+                    if usage_percentage > CPU_USAGE_WARNING_THRESHOLD:
+                        line_color = curses.color_pair(6) | curses.A_BOLD  # Bold yellow for warning
+                    else:
+                        line_color = text_color  # Normal color
                     
                 screen.addstr(line_y, box_x, info_line, line_color)
 
@@ -347,9 +390,6 @@ def draw_alert_banner(screen, screen_width, alert_type):
     # Generate warning message based on alert type
     if alert_type == "throttling":
         warning_message = ' ⚠  THROTTLING: avg freq below 50% of max ⚠ '
-    elif alert_type.startswith("high_usage_"):
-        cores = alert_type.split('_')[2]
-        warning_message = f' ⚠  HIGH CPU LOAD: {cores} cores >90% usage ⚠ '
     elif alert_type.startswith("warning_usage_"):
         cores = alert_type.split('_')[2]
         warning_message = f' ⚠  CPU WARNING: {cores} cores >70% usage ⚠ '
@@ -480,7 +520,7 @@ def draw_frequency_graphs(screen, graph_area, frequency_histories, current_frequ
             screen.addstr(usage_y_position, usage_display_x, usage_display, label_color)
 
 
-def main_display_loop(screen, frequency_histories, usage_histories, maximum_frequency, minimum_averages):
+def main_display_loop(screen, frequency_histories, usage_histories, temperature_histories, maximum_frequency, minimum_averages):
     """
     Main display loop that continuously updates the CPU monitor.
 
@@ -507,14 +547,19 @@ def main_display_loop(screen, frequency_histories, usage_histories, maximum_freq
     # MAIN DISPLAY LOOP - This runs continuously until the user exits
     # ========================================================================
     while True:
-        # Step 1: Get the current frequency and usage of each CPU core
+        # Step 1: Get the current frequency, usage, and temperature of each CPU core
         current_frequencies, _ = get_cpu_frequencies()
         current_usage = get_cpu_usage()
+        current_temperatures = get_cpu_temperatures()
 
-        # Step 2: Add the new frequency and usage readings to our history
+        # Step 2: Add the new frequency, usage, and temperature readings to our history
         for core_index, current_frequency in enumerate(current_frequencies):
             frequency_histories[core_index].append(current_frequency)
             usage_histories[core_index].append(current_usage[core_index])
+            
+            # Add temperature data if available
+            if current_temperatures and core_index < len(current_temperatures):
+                temperature_histories[core_index].append(current_temperatures[core_index])
 
         # Step 2.5: Update minimum average frequencies (start tracking immediately)
         for core_index, core_history in enumerate(frequency_histories):
@@ -537,16 +582,43 @@ def main_display_loop(screen, frequency_histories, usage_histories, maximum_freq
         alert_active, alert_type, average_frequencies, average_usage = detect_alerts(
             frequency_histories, usage_histories, maximum_frequency
         )
+        
+        # Calculate temperature averages for display
+        average_temperatures = None
+        if any(len(temp_hist) > 0 for temp_hist in temperature_histories):
+            average_temperatures = []
+            for temp_history in temperature_histories:
+                if len(temp_history) > 0:
+                    avg_temp = sum(temp_history) / len(temp_history)
+                    average_temperatures.append(avg_temp)
+                else:
+                    average_temperatures.append(None)
 
-        # Step 6: Set background color for alert mode
-        if alert_active:
-            # Red background during alerts
+        # Step 6: Set red background only for critical conditions (throttling OR critical temperature)
+        critical_alert = False
+        
+        # Check for throttling (frequency below 50% of max)
+        if alert_type == "throttling":
+            critical_alert = True
+        
+        # Check for critical temperature (any core above 90°C)
+        if average_temperatures:
+            for temp in average_temperatures:
+                if temp is not None and temp >= TEMPERATURE_CRITICAL_THRESHOLD:
+                    critical_alert = True
+                    break
+        
+        if critical_alert:
+            # Red background for critical conditions only
             screen.bkgd(' ', curses.color_pair(3))
+        else:
+            # Reset to normal background when no critical alerts
+            screen.bkgd(' ', 0)  # Reset to default background
 
         # Step 7: Calculate layout dimensions
 
-        # Statistics box (right side of screen) - wider to accommodate usage column
-        stats_box_width = 42
+        # Statistics box (right side of screen) - wider to accommodate usage and temperature columns
+        stats_box_width = 48
         stats_box_x = screen_width - stats_box_width - 1
         stats_box_height = number_of_cores + 4  # cores + header + borders
         stats_box_y = (screen_height - stats_box_height) // 2  # center vertically
@@ -565,6 +637,7 @@ def main_display_loop(screen, frequency_histories, usage_histories, maximum_freq
             (stats_box_x, stats_box_y, stats_box_width, stats_box_height),
             average_frequencies,
             average_usage,
+            average_temperatures,
             maximum_frequency,
             alert_active,
             minimum_averages
@@ -644,6 +717,11 @@ def main():
         deque(maxlen=HISTORY_SECONDS) for _ in range(number_of_cores)
     ]
     
+    # Create temperature history storage for each core
+    temperature_histories = [
+        deque(maxlen=HISTORY_SECONDS) for _ in range(number_of_cores)
+    ]
+    
     # Create minimum average frequency tracking for each core (starts as None until window is full)
     minimum_averages = [None for _ in range(number_of_cores)]
 
@@ -651,7 +729,7 @@ def main():
     # curses.wrapper handles terminal setup/cleanup automatically
     try:
         curses.wrapper(
-            lambda screen: main_display_loop(screen, frequency_histories, usage_histories, maximum_frequency, minimum_averages)
+            lambda screen: main_display_loop(screen, frequency_histories, usage_histories, temperature_histories, maximum_frequency, minimum_averages)
         )
     except KeyboardInterrupt:
         # User pressed Ctrl+C - exit gracefully
