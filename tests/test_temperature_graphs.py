@@ -126,8 +126,8 @@ class TestTemperatureGraphs(unittest.TestCase):
         # Test that we can calculate rows per core with temperature
         num_cores = 4
         
-        # This constant doesn't exist yet - should fail
-        rows_per_core = cpu_freq_monitor.ROWS_PER_CORE_WITH_TEMPERATURE
+        # Test that we can access the constant from config
+        rows_per_core = cpu_freq_monitor.config.ROWS_PER_CORE_WITH_TEMPERATURE
         self.assertEqual(rows_per_core, 3)  # Frequency + Usage + Temperature
         
         # Test total rows calculation
@@ -205,12 +205,12 @@ class TestTemperatureGraphs(unittest.TestCase):
 
     def test_temperature_scale_constants(self):
         """Test temperature scale constants."""
-        # These constants don't exist yet - should fail
-        self.assertEqual(cpu_freq_monitor.TEMPERATURE_SCALE_MIN, 40.0)
-        self.assertEqual(cpu_freq_monitor.TEMPERATURE_SCALE_MAX, 100.0)
+        # Test constants are accessible from config
+        self.assertEqual(cpu_freq_monitor.config.TEMPERATURE_SCALE_MIN, 40.0)
+        self.assertEqual(cpu_freq_monitor.config.TEMPERATURE_SCALE_MAX, 100.0)
         
         # Scale range should be reasonable
-        scale_range = cpu_freq_monitor.TEMPERATURE_SCALE_MAX - cpu_freq_monitor.TEMPERATURE_SCALE_MIN
+        scale_range = cpu_freq_monitor.config.TEMPERATURE_SCALE_MAX - cpu_freq_monitor.config.TEMPERATURE_SCALE_MIN
         self.assertEqual(scale_range, 60.0)  # 60°C range
 
 

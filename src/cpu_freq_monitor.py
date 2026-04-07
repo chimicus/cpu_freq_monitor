@@ -20,34 +20,9 @@ import time
 from collections import deque
 import psutil
 
-# ============================================================================
-# CONFIGURATION CONSTANTS
-# ============================================================================
-
-# How many seconds of frequency history to keep for calculating averages
-HISTORY_SECONDS = 60
-
-# How many times per second to update the display (1 = once per second)
-UPDATE_FREQUENCY_HZ = 1
-
-# Alert threshold: warn if any core's average frequency drops below this
-# percentage of the maximum frequency (0.50 = 50%)
-THROTTLING_ALERT_THRESHOLD = 0.50
-
-# CPU usage alert thresholds
-CPU_USAGE_WARNING_THRESHOLD = 70  # % - warn when core usage exceeds this
-CPU_USAGE_HIGH_THRESHOLD = 90     # % - alert when core usage exceeds this
-
-# CPU temperature alert thresholds
-TEMPERATURE_WARNING_THRESHOLD = 80   # °C - warn when core temperature exceeds this
-TEMPERATURE_CRITICAL_THRESHOLD = 90  # °C - alert when core temperature exceeds this
-
-# Temperature graph scale (fixed range for consistent visualization)
-TEMPERATURE_SCALE_MIN = 40.0  # °C - minimum temperature for graph scale
-TEMPERATURE_SCALE_MAX = 100.0 # °C - maximum temperature for graph scale
-
-# Layout constants for triple graph display
-ROWS_PER_CORE_WITH_TEMPERATURE = 3  # Frequency + Usage + Temperature lines per core
+# Import configuration from dedicated config module
+from . import config
+from .data_models import SystemMetrics, AlertState, DisplayArea, GraphRenderParams
 
 # ============================================================================
 # CORE FUNCTIONS - CPU Frequency Reading
@@ -232,7 +207,7 @@ def detect_alerts(frequency_histories, usage_histories, maximum_frequency):
             average_usage.append(0.0)
 
     # Check for throttling (frequency-based alert)
-    throttling_threshold = maximum_frequency * THROTTLING_ALERT_THRESHOLD
+    throttling_threshold = maximum_frequency * config.THROTTLING_ALERT_THRESHOLD
     is_throttling = any(avg < throttling_threshold for avg in average_frequencies)
 
     # Usage alerts removed per user feedback: "high usage can happen and it is not bad, per se"
@@ -358,17 +333,17 @@ def draw_statistics_box(screen, box_position, average_frequencies, average_usage
                 # Choose color based on the most critical alert condition
                 if average_temperatures and core_index < len(average_temperatures):
                     temp_value = average_temperatures[core_index]
-                    if temp_value is not None and temp_value >= TEMPERATURE_CRITICAL_THRESHOLD:
+                    if temp_value is not None and temp_value >= config.TEMPERATURE_CRITICAL_THRESHOLD:
                         line_color = curses.color_pair(2) | curses.A_BOLD  # Bold red for critical temp
-                    elif temp_value is not None and temp_value >= TEMPERATURE_WARNING_THRESHOLD:
+                    elif temp_value is not None and temp_value >= config.TEMPERATURE_WARNING_THRESHOLD:
                         line_color = curses.color_pair(2)  # Red for warning temp
-                    elif usage_percentage > CPU_USAGE_WARNING_THRESHOLD:
+                    elif usage_percentage > config.CPU_USAGE_WARNING_THRESHOLD:
                         line_color = curses.color_pair(6) | curses.A_BOLD  # Bold yellow for warning usage
                     else:
                         line_color = text_color  # Normal color
                 else:
                     # No temperature data, fall back to usage-based coloring
-                    if usage_percentage > CPU_USAGE_WARNING_THRESHOLD:
+                    if usage_percentage > config.CPU_USAGE_WARNING_THRESHOLD:
                         line_color = curses.color_pair(6) | curses.A_BOLD  # Bold yellow for warning
                     else:
                         line_color = text_color  # Normal color
@@ -429,11 +404,11 @@ def temperature_to_graph_index(temperature):
         return 0  # Minimum character for None values
     
     # Clamp temperature to scale range
-    clamped_temp = max(TEMPERATURE_SCALE_MIN, min(TEMPERATURE_SCALE_MAX, temperature))
+    clamped_temp = max(config.TEMPERATURE_SCALE_MIN, min(config.TEMPERATURE_SCALE_MAX, temperature))
     
     # Convert to 0-1 range
-    temp_range = TEMPERATURE_SCALE_MAX - TEMPERATURE_SCALE_MIN
-    normalized = (clamped_temp - TEMPERATURE_SCALE_MIN) / temp_range
+    temp_range = config.TEMPERATURE_SCALE_MAX - config.TEMPERATURE_SCALE_MIN
+    normalized = (clamped_temp - config.TEMPERATURE_SCALE_MIN) / temp_range
     
     # Convert to 0-7 index
     return int(normalized * 7)
@@ -445,7 +420,7 @@ def get_temperature_graph_characters():
     Returns:
         list: Unicode bar characters from low to high
     """
-    return ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█']
+    return list(config.GRAPH_CHARACTERS)
 
 def temperature_history_to_graph(temperature_history):
     """
@@ -508,11 +483,11 @@ def draw_frequency_graphs(screen, graph_area, frequency_histories, current_frequ
     graph_x, graph_y, graph_width, graph_height = graph_area
     number_of_cores = len(frequency_histories)
 
-    # Unicode block characters for drawing the frequency bars (low to high)
-    frequency_bars = '▁▂▃▄▅▆▇█'
+    # Unicode block characters for drawing the graphs (low to high)
+    graph_bars = config.GRAPH_CHARACTERS
 
     # Calculate how many rows each core gets for its graphs (frequency + usage + temperature = 3 lines)
-    rows_per_core = max(ROWS_PER_CORE_WITH_TEMPERATURE, graph_height // number_of_cores)
+    rows_per_core = max(config.ROWS_PER_CORE_WITH_TEMPERATURE, graph_height // number_of_cores)
 
     # Choose graph colors based on alert mode
     if is_alert_mode:
@@ -584,8 +559,8 @@ def draw_frequency_graphs(screen, graph_area, frequency_histories, current_frequ
         for sample_index, frequency_sample in enumerate(recent_freq_samples):
             bar_x_position = graph_x + len(core_label) + padding_needed + sample_index
             frequency_percentage = min(1.0, frequency_sample / maximum_frequency)
-            bar_character_index = int(frequency_percentage * (len(frequency_bars) - 1))
-            bar_character = frequency_bars[bar_character_index]
+            bar_character_index = int(frequency_percentage * (len(graph_bars) - 1))
+            bar_character = graph_bars[bar_character_index]
 
             if (bar_x_position < graph_width and 
                 freq_y_position < screen_height - 1 and 
@@ -601,8 +576,8 @@ def draw_frequency_graphs(screen, graph_area, frequency_histories, current_frequ
         for sample_index, usage_sample in enumerate(recent_usage_samples):
             bar_x_position = graph_x + len(usage_label) + padding_needed + sample_index
             usage_percentage = min(1.0, usage_sample / 100.0)  # Convert to 0-1 range
-            bar_character_index = int(usage_percentage * (len(frequency_bars) - 1))
-            bar_character = frequency_bars[bar_character_index]
+            bar_character_index = int(usage_percentage * (len(graph_bars) - 1))
+            bar_character = graph_bars[bar_character_index]
 
             if (bar_x_position < graph_width and 
                 usage_y_position < screen_height - 1 and 
@@ -621,7 +596,7 @@ def draw_frequency_graphs(screen, graph_area, frequency_histories, current_frequ
                 
                 # Convert temperature to graph index using our helper function
                 bar_character_index = temperature_to_graph_index(temp_sample)
-                bar_character = frequency_bars[bar_character_index]
+                bar_character = graph_bars[bar_character_index]
 
                 if (bar_x_position < graph_width and 
                     temp_y_position < screen_height - 1 and 
@@ -652,28 +627,26 @@ def draw_frequency_graphs(screen, graph_area, frequency_histories, current_frequ
             screen.addstr(temp_y_position, temp_display_x, temp_display_sample, label_color)
 
 
-def main_display_loop(screen, frequency_histories, usage_histories, temperature_histories, maximum_frequency, minimum_averages):
+def main_display_loop(screen, system_metrics: SystemMetrics, maximum_frequency):
     """
     Main display loop that continuously updates the CPU monitor.
 
     This is the core loop that:
-    1. Reads current CPU frequencies and usage
-    2. Updates frequency and usage histories
-    3. Detects alert conditions (throttling, high usage)
+    1. Reads current CPU frequencies, usage, and temperatures
+    2. Updates system metrics with new data
+    3. Detects alert conditions (throttling, critical temperature)
     4. Draws the complete interface
     5. Sleeps until next update
 
     Args:
         screen: The curses screen object
-        frequency_histories: List of deque objects for storing frequency history
-        usage_histories: List of deque objects for storing usage history
+        system_metrics: SystemMetrics object managing all core data
         maximum_frequency: Maximum frequency capability of the CPU
-        minimum_averages: List to track minimum average frequencies after window is full
     """
     # Set up colors for the terminal display
     setup_terminal_colors()
 
-    number_of_cores = len(frequency_histories)
+    number_of_cores = system_metrics.num_cores
 
     # ========================================================================
     # MAIN DISPLAY LOOP - This runs continuously until the user exits
@@ -736,7 +709,7 @@ def main_display_loop(screen, frequency_histories, usage_histories, temperature_
         # Check for critical temperature (any core above 90°C)
         if average_temperatures:
             for temp in average_temperatures:
-                if temp is not None and temp >= TEMPERATURE_CRITICAL_THRESHOLD:
+                if temp is not None and temp >= config.TEMPERATURE_CRITICAL_THRESHOLD:
                     critical_alert = True
                     break
         
@@ -798,7 +771,7 @@ def main_display_loop(screen, frequency_histories, usage_histories, temperature_
         screen.refresh()
 
         # Step 10: Wait before the next update
-        time.sleep(1.0 / UPDATE_FREQUENCY_HZ)
+        time.sleep(1.0 / config.UPDATE_FREQUENCY_HZ)
 
 # ============================================================================
 # MAIN PROGRAM ENTRY POINT
@@ -840,30 +813,14 @@ def main():
     print(f"Press Ctrl+C to exit")
     print("")
 
-    # Create history storage for each core
-    # Each deque will automatically maintain only the most recent HISTORY_SECONDS values
-    frequency_histories = [
-        deque(maxlen=HISTORY_SECONDS) for _ in range(number_of_cores)
-    ]
-    
-    # Create usage history storage for each core
-    usage_histories = [
-        deque(maxlen=HISTORY_SECONDS) for _ in range(number_of_cores)
-    ]
-    
-    # Create temperature history storage for each core
-    temperature_histories = [
-        deque(maxlen=HISTORY_SECONDS) for _ in range(number_of_cores)
-    ]
-    
-    # Create minimum average frequency tracking for each core (starts as None until window is full)
-    minimum_averages = [None for _ in range(number_of_cores)]
+    # Create system metrics manager (replaces separate history lists)
+    system_metrics = SystemMetrics(number_of_cores)
 
     # Launch the terminal interface
     # curses.wrapper handles terminal setup/cleanup automatically
     try:
         curses.wrapper(
-            lambda screen: main_display_loop(screen, frequency_histories, usage_histories, temperature_histories, maximum_frequency, minimum_averages)
+            lambda screen: main_display_loop(screen, system_metrics, maximum_frequency)
         )
     except KeyboardInterrupt:
         # User pressed Ctrl+C - exit gracefully
