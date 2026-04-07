@@ -3,7 +3,7 @@
 Debug script to track down the CPU usage issue.
 """
 
-import cpu_freq_monitor
+import sys; sys.path.insert(0, "."); from src import cpu_freq_monitor
 import psutil
 import time
 

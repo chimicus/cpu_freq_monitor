@@ -235,19 +235,16 @@ def detect_alerts(frequency_histories, usage_histories, maximum_frequency):
     throttling_threshold = maximum_frequency * THROTTLING_ALERT_THRESHOLD
     is_throttling = any(avg < throttling_threshold for avg in average_frequencies)
 
-    # Check for warning-level CPU usage only (removed high usage alerts per user request)
-    warning_usage_cores = sum(1 for avg in average_usage if avg > CPU_USAGE_WARNING_THRESHOLD)
+    # Usage alerts removed per user feedback: "high usage can happen and it is not bad, per se"
+    # Only throttling alerts remain for critical frequency drops
 
-    # Determine primary alert type (prioritize critical conditions)
+    # Determine primary alert type (only throttling now)
     alert_active = False
     alert_type = "normal"
     
     if is_throttling:
         alert_active = True
         alert_type = "throttling"
-    elif warning_usage_cores > 0:
-        alert_active = True
-        alert_type = f"warning_usage_{warning_usage_cores}_cores"
 
     return alert_active, alert_type, average_frequencies, average_usage
 

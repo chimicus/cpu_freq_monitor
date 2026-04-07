@@ -6,7 +6,7 @@ Comprehensive tests for dual graph functionality (frequency + usage graphs).
 import unittest
 from unittest.mock import patch, MagicMock
 from collections import deque
-import cpu_freq_monitor
+import sys; sys.path.insert(0, "."); from src import cpu_freq_monitor
 
 class TestDualGraphFunctionality(unittest.TestCase):
 
@@ -31,7 +31,7 @@ class TestDualGraphFunctionality(unittest.TestCase):
 
     def test_get_cpu_usage_returns_valid_data(self):
         """Test that get_cpu_usage returns usage percentages."""
-        with patch('cpu_freq_monitor.psutil.cpu_percent') as mock_cpu_percent:
+        with patch('src.cpu_freq_monitor.psutil.cpu_percent') as mock_cpu_percent:
             mock_cpu_percent.return_value = [25.5, 30.0, 15.2, 50.8]
             
             usage = cpu_freq_monitor.get_cpu_usage()
@@ -53,12 +53,12 @@ class TestDualGraphFunctionality(unittest.TestCase):
         self.assertEqual(len(avg_freq), self.num_cores)
         self.assertEqual(len(avg_usage), self.num_cores)
 
-    def test_detect_alerts_high_usage(self):
-        """Test alert detection for high CPU usage."""
+    def test_detect_alerts_high_usage_no_longer_triggers_alerts(self):
+        """Test that high CPU usage no longer triggers alerts (user feedback)."""
         # Create high usage scenario
         high_usage_histories = [deque(maxlen=60) for _ in range(self.num_cores)]
         
-        # Add high usage samples (>90%)
+        # Add high usage samples (>90%) - this should NOT trigger alerts anymore
         for i in range(self.num_cores):
             for _ in range(3):
                 high_usage_histories[i].append(95.0)  # High usage
@@ -67,11 +67,13 @@ class TestDualGraphFunctionality(unittest.TestCase):
             self.freq_histories, high_usage_histories, self.max_freq
         )
         
-        self.assertTrue(alert_active)
-        self.assertTrue(alert_type.startswith("high_usage_"))
+        # High usage should NOT trigger alerts per user feedback:
+        # "high usage can happen and it is not bad, per se"
+        self.assertFalse(alert_active)
+        self.assertEqual(alert_type, "normal")
 
-    def test_detect_alerts_warning_usage(self):
-        """Test alert detection for warning-level CPU usage."""
+    def test_detect_alerts_warning_usage_no_longer_triggers_alerts(self):
+        """Test that warning-level CPU usage no longer triggers alerts (user feedback)."""
         # Create warning usage scenario
         warning_usage_histories = [deque(maxlen=60) for _ in range(self.num_cores)]
         
@@ -89,8 +91,9 @@ class TestDualGraphFunctionality(unittest.TestCase):
             self.freq_histories, warning_usage_histories, self.max_freq
         )
         
-        self.assertTrue(alert_active)
-        self.assertTrue(alert_type.startswith("warning_usage_"))
+        # Warning usage should NOT trigger alerts per user feedback
+        self.assertFalse(alert_active)
+        self.assertEqual(alert_type, "normal")
 
     def test_detect_alerts_throttling_priority(self):
         """Test that throttling alerts take priority over usage alerts."""
@@ -205,8 +208,8 @@ class TestDualGraphFunctionality(unittest.TestCase):
         for avg in avg_usage:
             self.assertEqual(avg, 0.0)
 
-    @patch('cpu_freq_monitor.psutil.cpu_percent')
-    @patch('cpu_freq_monitor.psutil.cpu_freq')
+    @patch('src.cpu_freq_monitor.psutil.cpu_percent')
+    @patch('src.cpu_freq_monitor.psutil.cpu_freq')
     def test_main_loop_data_collection_integration(self, mock_cpu_freq, mock_cpu_percent):
         """Test that main loop collects both frequency and usage data correctly."""
         # Mock psutil responses

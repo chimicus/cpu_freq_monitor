@@ -6,7 +6,7 @@ Starting with just reading temperatures - these should fail since get_cpu_temper
 
 import unittest
 from unittest.mock import patch, MagicMock
-import cpu_freq_monitor
+import sys; sys.path.insert(0, "."); from src import cpu_freq_monitor
 
 class TestTemperatureReading(unittest.TestCase):
 
@@ -17,7 +17,7 @@ class TestTemperatureReading(unittest.TestCase):
 
     def test_get_cpu_temperatures_with_coretemp_sensors(self):
         """Test reading temperatures from coretemp sensors (Intel)."""
-        with patch('cpu_freq_monitor.psutil.sensors_temperatures') as mock_sensors:
+        with patch('src.cpu_freq_monitor.psutil.sensors_temperatures') as mock_sensors:
             # Mock Intel coretemp sensor data
             mock_sensors.return_value = {
                 'coretemp': [
@@ -39,7 +39,7 @@ class TestTemperatureReading(unittest.TestCase):
 
     def test_get_cpu_temperatures_with_k10temp_sensors(self):
         """Test reading temperatures from k10temp sensors (AMD)."""
-        with patch('cpu_freq_monitor.psutil.sensors_temperatures') as mock_sensors:
+        with patch('src.cpu_freq_monitor.psutil.sensors_temperatures') as mock_sensors:
             # Mock AMD k10temp sensor data
             mock_sensors.return_value = {
                 'k10temp': [
@@ -57,7 +57,7 @@ class TestTemperatureReading(unittest.TestCase):
 
     def test_get_cpu_temperatures_no_sensors_available(self):
         """Test graceful handling when no temperature sensors are found."""
-        with patch('cpu_freq_monitor.psutil.sensors_temperatures') as mock_sensors:
+        with patch('src.cpu_freq_monitor.psutil.sensors_temperatures') as mock_sensors:
             mock_sensors.return_value = {}  # No sensors
             
             temps = cpu_freq_monitor.get_cpu_temperatures()
@@ -67,7 +67,7 @@ class TestTemperatureReading(unittest.TestCase):
 
     def test_get_cpu_temperatures_psutil_exception(self):
         """Test handling when psutil.sensors_temperatures() throws exception."""
-        with patch('cpu_freq_monitor.psutil.sensors_temperatures') as mock_sensors:
+        with patch('src.cpu_freq_monitor.psutil.sensors_temperatures') as mock_sensors:
             mock_sensors.side_effect = Exception("Sensor access denied")
             
             # Should not crash, should return None
@@ -76,8 +76,8 @@ class TestTemperatureReading(unittest.TestCase):
 
     def test_get_cpu_temperatures_returns_reasonable_values(self):
         """Test that returned temperatures are within reasonable range."""
-        with patch('cpu_freq_monitor.psutil.sensors_temperatures') as mock_sensors, \
-             patch('cpu_freq_monitor.psutil.cpu_count') as mock_cpu_count:
+        with patch('src.cpu_freq_monitor.psutil.sensors_temperatures') as mock_sensors, \
+             patch('src.cpu_freq_monitor.psutil.cpu_count') as mock_cpu_count:
             
             # Mock 4 logical cores from 2 physical cores
             def cpu_count_side_effect(logical=True):
@@ -122,10 +122,10 @@ class TestTemperatureReading(unittest.TestCase):
 
     def test_integration_with_existing_functions(self):
         """Test that temperature reading works alongside existing functions."""
-        with patch('cpu_freq_monitor.psutil.sensors_temperatures') as mock_temps, \
-             patch('cpu_freq_monitor.psutil.cpu_freq') as mock_freq, \
-             patch('cpu_freq_monitor.psutil.cpu_percent') as mock_usage, \
-             patch('cpu_freq_monitor.psutil.cpu_count') as mock_cpu_count:
+        with patch('src.cpu_freq_monitor.psutil.sensors_temperatures') as mock_temps, \
+             patch('src.cpu_freq_monitor.psutil.cpu_freq') as mock_freq, \
+             patch('src.cpu_freq_monitor.psutil.cpu_percent') as mock_usage, \
+             patch('src.cpu_freq_monitor.psutil.cpu_count') as mock_cpu_count:
             
             # Mock all three data sources
             mock_freq_obj = MagicMock()

@@ -4,7 +4,7 @@ Integration test for dual graph drawing functionality.
 Tests the actual draw_frequency_graphs function with mock curses.
 """
 
-import cpu_freq_monitor
+import sys; sys.path.insert(0, "."); from src import cpu_freq_monitor
 from collections import deque
 from unittest.mock import MagicMock, patch
 
@@ -53,7 +53,7 @@ def test_dual_graph_drawing():
     print()
     
     # Mock curses color functions
-    with patch('cpu_freq_monitor.curses.color_pair') as mock_color_pair:
+    with patch('src.cpu_freq_monitor.curses.color_pair') as mock_color_pair:
         mock_color_pair.return_value = 0  # Return dummy color value
         
         try:
@@ -126,7 +126,7 @@ def test_alert_mode_drawing():
     current_frequencies = [1000.0]
     current_usage = [95.0]
     
-    with patch('cpu_freq_monitor.curses.color_pair') as mock_color_pair:
+    with patch('src.cpu_freq_monitor.curses.color_pair') as mock_color_pair:
         mock_color_pair.return_value = 0
         
         try:

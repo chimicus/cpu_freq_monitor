@@ -3,7 +3,7 @@
 Real-world test of temperature reading functionality.
 """
 
-import cpu_freq_monitor
+import sys; sys.path.insert(0, "."); from src import cpu_freq_monitor
 
 def test_real_temperature_reading():
     """Test temperature reading with actual system sensors."""

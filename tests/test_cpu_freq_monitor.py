@@ -2,13 +2,13 @@
 import unittest
 from unittest.mock import patch, MagicMock
 from collections import deque
-import cpu_freq_monitor
+import sys; sys.path.insert(0, "."); from src import cpu_freq_monitor
 
 class TestCpuFreqMonitor(unittest.TestCase):
 
     def test_get_cpu_frequencies_returns_valid_data(self):
         """Test that get_cpu_frequencies returns frequencies and max frequency"""
-        with patch('cpu_freq_monitor.psutil.cpu_freq') as mock_cpu_freq:
+        with patch('src.cpu_freq_monitor.psutil.cpu_freq') as mock_cpu_freq:
             mock_freq_obj = MagicMock()
             mock_freq_obj.current = 2000.0
             mock_freq_obj.max = 3000.0
@@ -22,7 +22,7 @@ class TestCpuFreqMonitor(unittest.TestCase):
 
     def test_get_cpu_frequencies_handles_single_core(self):
         """Test get_cpu_frequencies with single core system"""
-        with patch('cpu_freq_monitor.psutil.cpu_freq') as mock_cpu_freq:
+        with patch('src.cpu_freq_monitor.psutil.cpu_freq') as mock_cpu_freq:
             mock_freq_obj = MagicMock()
             mock_freq_obj.current = 1500.0
             mock_freq_obj.max = 2500.0

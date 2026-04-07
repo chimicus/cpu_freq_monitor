@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 tests/test_temperature_reading.py)",
+      "Bash(python3 tests/test_background_behavior.py)",
+      "Bash(python3 tests/test_triple_graphs.py)",
+      "Bash(python3 -c \"from src import cpu_freq_monitor; print(''✅ Module imports successfully from new location'')\")",
+      "Bash(python3 tests/test_dual_graph_functionality.py)",
+      "Bash(git add -A)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

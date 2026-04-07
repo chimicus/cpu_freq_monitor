@@ -4,7 +4,7 @@ Test the new temperature mapping from physical to logical cores.
 """
 
 import psutil
-import cpu_freq_monitor
+import sys; sys.path.insert(0, "."); from src import cpu_freq_monitor
 
 def test_temperature_mapping():
     """Debug the temperature mapping functionality."""

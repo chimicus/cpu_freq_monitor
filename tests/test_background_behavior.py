@@ -5,17 +5,17 @@ Test the background color behavior for critical alerts.
 
 import unittest
 from unittest.mock import patch, MagicMock
-import cpu_freq_monitor
+import sys; sys.path.insert(0, "."); from src import cpu_freq_monitor
 from collections import deque
 
 class TestBackgroundBehavior(unittest.TestCase):
 
     def test_normal_conditions_no_red_background(self):
         """Test that normal conditions don't trigger red background."""
-        with patch('cpu_freq_monitor.psutil.cpu_freq') as mock_freq, \
-             patch('cpu_freq_monitor.psutil.cpu_percent') as mock_usage, \
-             patch('cpu_freq_monitor.psutil.sensors_temperatures') as mock_temps, \
-             patch('cpu_freq_monitor.psutil.cpu_count') as mock_cpu_count:
+        with patch('src.cpu_freq_monitor.psutil.cpu_freq') as mock_freq, \
+             patch('src.cpu_freq_monitor.psutil.cpu_percent') as mock_usage, \
+             patch('src.cpu_freq_monitor.psutil.sensors_temperatures') as mock_temps, \
+             patch('src.cpu_freq_monitor.psutil.cpu_count') as mock_cpu_count:
             
             # Mock normal conditions
             mock_freq_obj = MagicMock()
@@ -73,10 +73,10 @@ class TestBackgroundBehavior(unittest.TestCase):
 
     def test_throttling_triggers_red_background(self):
         """Test that throttling triggers red background."""
-        with patch('cpu_freq_monitor.psutil.cpu_freq') as mock_freq, \
-             patch('cpu_freq_monitor.psutil.cpu_percent') as mock_usage, \
-             patch('cpu_freq_monitor.psutil.sensors_temperatures') as mock_temps, \
-             patch('cpu_freq_monitor.psutil.cpu_count') as mock_cpu_count:
+        with patch('src.cpu_freq_monitor.psutil.cpu_freq') as mock_freq, \
+             patch('src.cpu_freq_monitor.psutil.cpu_percent') as mock_usage, \
+             patch('src.cpu_freq_monitor.psutil.sensors_temperatures') as mock_temps, \
+             patch('src.cpu_freq_monitor.psutil.cpu_count') as mock_cpu_count:
             
             # Mock throttling conditions
             mock_freq_obj = MagicMock()
@@ -134,10 +134,10 @@ class TestBackgroundBehavior(unittest.TestCase):
 
     def test_critical_temperature_triggers_red_background(self):
         """Test that critical temperature triggers red background."""
-        with patch('cpu_freq_monitor.psutil.cpu_freq') as mock_freq, \
-             patch('cpu_freq_monitor.psutil.cpu_percent') as mock_usage, \
-             patch('cpu_freq_monitor.psutil.sensors_temperatures') as mock_temps, \
-             patch('cpu_freq_monitor.psutil.cpu_count') as mock_cpu_count:
+        with patch('src.cpu_freq_monitor.psutil.cpu_freq') as mock_freq, \
+             patch('src.cpu_freq_monitor.psutil.cpu_percent') as mock_usage, \
+             patch('src.cpu_freq_monitor.psutil.sensors_temperatures') as mock_temps, \
+             patch('src.cpu_freq_monitor.psutil.cpu_count') as mock_cpu_count:
             
             # Mock critical temperature conditions
             mock_freq_obj = MagicMock()
@@ -196,10 +196,10 @@ class TestBackgroundBehavior(unittest.TestCase):
 
     def test_high_usage_does_not_trigger_red_background(self):
         """Test that high CPU usage (>90%) does NOT trigger red background."""
-        with patch('cpu_freq_monitor.psutil.cpu_freq') as mock_freq, \
-             patch('cpu_freq_monitor.psutil.cpu_percent') as mock_usage, \
-             patch('cpu_freq_monitor.psutil.sensors_temperatures') as mock_temps, \
-             patch('cpu_freq_monitor.psutil.cpu_count') as mock_cpu_count:
+        with patch('src.cpu_freq_monitor.psutil.cpu_freq') as mock_freq, \
+             patch('src.cpu_freq_monitor.psutil.cpu_percent') as mock_usage, \
+             patch('src.cpu_freq_monitor.psutil.sensors_temperatures') as mock_temps, \
+             patch('src.cpu_freq_monitor.psutil.cpu_count') as mock_cpu_count:
             
             # Mock high usage conditions
             mock_freq_obj = MagicMock()

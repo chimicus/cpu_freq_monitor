@@ -3,7 +3,7 @@
 Test script that simulates the main program loop to verify CPU usage works correctly.
 """
 
-import cpu_freq_monitor
+import sys; sys.path.insert(0, "."); from src import cpu_freq_monitor
 import psutil
 import time
 from collections import deque

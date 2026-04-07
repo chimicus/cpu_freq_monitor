@@ -3,7 +3,7 @@
 Test to verify CPU usage collection in the main loop logic.
 """
 
-import cpu_freq_monitor
+import sys; sys.path.insert(0, "."); from src import cpu_freq_monitor
 from collections import deque
 import time
 

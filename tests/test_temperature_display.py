@@ -3,7 +3,7 @@
 Test temperature display in the statistics table.
 """
 
-import cpu_freq_monitor
+import sys; sys.path.insert(0, "."); from src import cpu_freq_monitor
 from collections import deque
 
 def test_temperature_in_statistics():

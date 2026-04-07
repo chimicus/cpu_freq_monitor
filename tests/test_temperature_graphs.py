@@ -6,7 +6,7 @@ Starting with tests - these should fail since temperature graphing doesn't exist
 
 import unittest
 from unittest.mock import patch, MagicMock
-import cpu_freq_monitor
+import sys; sys.path.insert(0, "."); from src import cpu_freq_monitor
 from collections import deque
 
 class TestTemperatureGraphs(unittest.TestCase):
@@ -60,7 +60,7 @@ class TestTemperatureGraphs(unittest.TestCase):
 
     def test_temperature_graph_integration_with_draw_frequency_graphs(self):
         """Test that temperature graphs integrate with existing graph drawing."""
-        with patch('cpu_freq_monitor.curses') as mock_curses:
+        with patch('src.cpu_freq_monitor.curses') as mock_curses:
             mock_screen = MagicMock()
             
             # Mock screen.getmaxyx() to return screen dimensions
@@ -150,7 +150,7 @@ class TestTemperatureGraphs(unittest.TestCase):
 
     def test_temperature_graph_color_normal_vs_alert(self):
         """Test temperature graph coloring in normal vs alert modes."""
-        with patch('cpu_freq_monitor.curses') as mock_curses:
+        with patch('src.cpu_freq_monitor.curses') as mock_curses:
             mock_screen = MagicMock()
             
             # Mock color pairs

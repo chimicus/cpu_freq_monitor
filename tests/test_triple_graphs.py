@@ -3,7 +3,7 @@
 Functional test for triple graph display (frequency + usage + temperature).
 """
 
-import cpu_freq_monitor
+import sys; sys.path.insert(0, "."); from src import cpu_freq_monitor
 import time
 from collections import deque
 
