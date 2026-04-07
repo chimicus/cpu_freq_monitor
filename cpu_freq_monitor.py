@@ -297,15 +297,17 @@ def draw_alert_banner(screen, screen_width, alert_type):
     screen.addstr(0, banner_x, warning_message, alert_style)
 
 
-def draw_frequency_graphs(screen, graph_area, frequency_histories, current_frequencies, maximum_frequency, is_alert_mode, stats_box_width):
+def draw_frequency_graphs(screen, graph_area, frequency_histories, current_frequencies, usage_histories, current_usage, maximum_frequency, is_alert_mode, stats_box_width):
     """
-    Draw the real-time frequency graphs for each CPU core.
+    Draw the real-time frequency and usage graphs for each CPU core.
 
     Args:
         screen: The curses screen object
         graph_area: Tuple of (x, y, width, height) for graph placement
         frequency_histories: List of deque objects with frequency history
         current_frequencies: List of current frequency values
+        usage_histories: List of deque objects with usage history
+        current_usage: List of current usage percentages
         maximum_frequency: Maximum frequency capability
         is_alert_mode: Whether we're in alert mode (affects colors)
     """
@@ -315,76 +317,100 @@ def draw_frequency_graphs(screen, graph_area, frequency_histories, current_frequ
     # Unicode block characters for drawing the frequency bars (low to high)
     frequency_bars = '▁▂▃▄▅▆▇█'
 
-    # Calculate how many rows each core gets for its graph
-    rows_per_core = max(1, graph_height // number_of_cores)
+    # Calculate how many rows each core gets for its graphs (frequency + usage = 2 lines)
+    rows_per_core = max(2, graph_height // number_of_cores)
 
-    # Choose graph color based on alert mode
+    # Choose graph colors based on alert mode
     if is_alert_mode:
-        graph_color = curses.color_pair(2)  # Red during alerts
+        freq_graph_color = curses.color_pair(2)  # Red during alerts
+        usage_graph_color = curses.color_pair(2)  # Red during alerts
         label_color = curses.color_pair(4)  # White on red during alerts
     else:
-        graph_color = curses.color_pair(1)  # Green normally
+        freq_graph_color = curses.color_pair(1)  # Green for frequency
+        usage_graph_color = curses.color_pair(5)  # Cyan for usage
         label_color = curses.color_pair(6)  # Yellow normally
 
-    # Draw a graph for each CPU core
-    for core_index, core_history in enumerate(frequency_histories):
-        # Calculate the vertical position for this core's graph
-        core_y_position = graph_y + core_index * rows_per_core
+    # Draw frequency and usage graphs for each CPU core
+    for core_index, core_freq_history in enumerate(frequency_histories):
+        # Calculate the vertical position for this core's graphs (frequency + usage)
+        freq_y_position = graph_y + core_index * rows_per_core
+        usage_y_position = freq_y_position + 1
 
         # Skip if this would go off the bottom of the screen
         screen_height, screen_width = screen.getmaxyx()
-        if core_y_position >= screen_height - 1:
+        if usage_y_position >= screen_height - 1:
             break
 
-        # Draw the core label (e.g., "C0 ")
+        # Draw the core label on the frequency line (e.g., "C0 ")
         core_label = f'C{core_index} '
-        screen.addstr(core_y_position, graph_x, core_label, label_color | curses.A_BOLD)
+        screen.addstr(freq_y_position, graph_x, core_label, label_color | curses.A_BOLD)
+        
+        # Draw usage indicator on the usage line
+        usage_label = '   U'
+        screen.addstr(usage_y_position, graph_x, usage_label, label_color)
 
-        # Calculate how much horizontal space we have for the graph
-        # We need to account for the frequency display that will be shown after the graph
+        # Calculate how much horizontal space we have for the graphs
         frequency_display_sample = f' {current_frequencies[core_index]:>7.0f}/{maximum_frequency:.0f} MHz'
+        usage_display_sample = f' {current_usage[core_index]:>5.1f}%'
         space_needed_for_freq_display = len(frequency_display_sample)
+        space_needed_for_usage_display = len(usage_display_sample)
 
-        # Calculate actual available width for the frequency bars
+        # Use the larger of the two display widths for consistent alignment
+        space_needed_for_display = max(space_needed_for_freq_display, space_needed_for_usage_display)
+        
+        # Calculate actual available width for the graph bars
         available_graph_width = (graph_width - len(core_label) - 
-                                space_needed_for_freq_display - 2)  # 2 chars margin
+                                space_needed_for_display - 2)  # 2 chars margin
 
-        # Get the most recent frequency samples that fit in our graph width
-        recent_samples = list(core_history)[-available_graph_width:]
-
-        # If we don't have enough history to fill the graph, pad with empty space
-        padding_needed = available_graph_width - len(recent_samples)
+        # FREQUENCY GRAPH - Get the most recent frequency samples
+        recent_freq_samples = list(core_freq_history)[-available_graph_width:]
+        padding_needed = available_graph_width - len(recent_freq_samples)
 
         # Draw the frequency history as bars
-        for sample_index, frequency_sample in enumerate(recent_samples):
-            # Calculate horizontal position for this bar
+        for sample_index, frequency_sample in enumerate(recent_freq_samples):
             bar_x_position = graph_x + len(core_label) + padding_needed + sample_index
-
-            # Convert frequency to a percentage of maximum
             frequency_percentage = min(1.0, frequency_sample / maximum_frequency)
-
-            # Pick the appropriate Unicode block character
             bar_character_index = int(frequency_percentage * (len(frequency_bars) - 1))
             bar_character = frequency_bars[bar_character_index]
 
-            # Draw the bar if it fits on screen
             if (bar_x_position < graph_width and 
-                core_y_position < screen_height - 1 and 
+                freq_y_position < screen_height - 1 and 
                 bar_x_position >= 0):
-                screen.addstr(core_y_position, bar_x_position, bar_character, graph_color)
+                screen.addstr(freq_y_position, bar_x_position, bar_character, freq_graph_color)
 
-        # Draw current frequency value immediately after the graph bars
+        # USAGE GRAPH - Get the most recent usage samples
+        core_usage_history = usage_histories[core_index]
+        recent_usage_samples = list(core_usage_history)[-available_graph_width:]
+        padding_needed = available_graph_width - len(recent_usage_samples)
+
+        # Draw the usage history as bars
+        for sample_index, usage_sample in enumerate(recent_usage_samples):
+            bar_x_position = graph_x + len(usage_label) + padding_needed + sample_index
+            usage_percentage = min(1.0, usage_sample / 100.0)  # Convert to 0-1 range
+            bar_character_index = int(usage_percentage * (len(frequency_bars) - 1))
+            bar_character = frequency_bars[bar_character_index]
+
+            if (bar_x_position < graph_width and 
+                usage_y_position < screen_height - 1 and 
+                bar_x_position >= 0):
+                screen.addstr(usage_y_position, bar_x_position, bar_character, usage_graph_color)
+
+        # Draw current values after the graphs
+        freq_display_x = len(core_label) + available_graph_width + 1
+        usage_display_x = len(usage_label) + available_graph_width + 1
+
+        # Draw frequency display
         current_freq = current_frequencies[core_index]
         frequency_display = f' {current_freq:>7.0f}/{maximum_frequency:.0f} MHz'
-
-        # Position it right after the graph bars with a small gap
-        freq_display_x = len(core_label) + available_graph_width + 1
-        screen_height, screen_width = screen.getmaxyx()
-
-        # Make sure it fits on screen
         if (freq_display_x + len(frequency_display) < screen_width and 
-            core_y_position < screen_height - 1):
-            screen.addstr(core_y_position, freq_display_x, frequency_display, label_color)
+            freq_y_position < screen_height - 1):
+            screen.addstr(freq_y_position, freq_display_x, frequency_display, label_color)
+
+        # Draw usage display  
+        usage_display = f' {current_usage[core_index]:>5.1f}%'
+        if (usage_display_x + len(usage_display) < screen_width and 
+            usage_y_position < screen_height - 1):
+            screen.addstr(usage_y_position, usage_display_x, usage_display, label_color)
 
 
 def main_display_loop(screen, frequency_histories, usage_histories, maximum_frequency, minimum_averages):
@@ -481,12 +507,14 @@ def main_display_loop(screen, frequency_histories, usage_histories, maximum_freq
         if alert_active:
             draw_alert_banner(screen, screen_width, alert_type)
 
-        # Draw the frequency graphs for each core
+        # Draw the frequency and usage graphs for each core
         draw_frequency_graphs(
             screen,
             (graph_area_x, graph_area_y, graph_area_width, graph_area_height),
             frequency_histories,
             current_frequencies,
+            usage_histories,
+            current_usage,
             maximum_frequency,
             alert_active,
             stats_box_width  # Pass box width so graphs don't overlap
