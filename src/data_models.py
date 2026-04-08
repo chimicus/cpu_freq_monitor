@@ -8,7 +8,7 @@ system state, and display parameters in a clean, object-oriented way.
 from collections import deque
 from dataclasses import dataclass
 from typing import List, Optional, Deque
-from . import config
+from src import config
 
 
 @dataclass

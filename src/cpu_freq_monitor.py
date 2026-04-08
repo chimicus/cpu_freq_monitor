@@ -21,8 +21,8 @@ from collections import deque
 import psutil
 
 # Import configuration from dedicated config module
-from . import config
-from .data_models import SystemMetrics, AlertState, DisplayArea, GraphRenderParams
+from src import config
+from src.data_models import SystemMetrics, AlertState, DisplayArea, GraphRenderParams
 
 # ============================================================================
 # CORE FUNCTIONS - CPU Frequency Reading
@@ -256,6 +256,9 @@ def setup_terminal_colors():
 
     # Color pair 6: Yellow text for normal labels
     curses.init_pair(6, curses.COLOR_YELLOW, -1)
+    
+    # Color pair 7: White text for temperature graphs
+    curses.init_pair(7, curses.COLOR_WHITE, -1)
 
 
 def draw_statistics_box(screen, box_position, average_frequencies, average_usage, average_temperatures, maximum_frequency, is_alert_mode, minimum_averages):
@@ -454,10 +457,7 @@ def get_temperature_graph_color(alert_active=False):
     Returns:
         int: Curses color pair number
     """
-    if alert_active:
-        return 3  # Red color pair
-    else:
-        return 4  # Cyan color pair
+    return 7  # White color pair (no red/cyan)
 
 
 # ============================================================================
@@ -493,12 +493,12 @@ def draw_frequency_graphs(screen, graph_area, frequency_histories, current_frequ
     if is_alert_mode:
         freq_graph_color = curses.color_pair(2)  # Red during alerts
         usage_graph_color = curses.color_pair(2)  # Red during alerts
-        temp_graph_color = curses.color_pair(2)   # Red during alerts
+        temp_graph_color = curses.color_pair(7)   # White for temperature (no red)
         label_color = curses.color_pair(4)  # White on red during alerts
     else:
         freq_graph_color = curses.color_pair(1)  # Green for frequency
         usage_graph_color = curses.color_pair(5)  # Cyan for usage
-        temp_graph_color = curses.color_pair(4)   # Cyan for temperature (different shade)
+        temp_graph_color = curses.color_pair(7)   # White for temperature (no red)
         label_color = curses.color_pair(6)  # Yellow normally
 
     # Draw frequency, usage, and temperature graphs for each CPU core
@@ -658,24 +658,13 @@ def main_display_loop(screen, system_metrics: SystemMetrics, maximum_frequency):
         current_temperatures = get_cpu_temperatures()
 
         # Step 2: Add the new frequency, usage, and temperature readings to our history
-        for core_index, current_frequency in enumerate(current_frequencies):
-            frequency_histories[core_index].append(current_frequency)
-            usage_histories[core_index].append(current_usage[core_index])
-            
-            # Add temperature data if available
-            if current_temperatures and core_index < len(current_temperatures):
-                temperature_histories[core_index].append(current_temperatures[core_index])
+        system_metrics.update_all_frequencies(current_frequencies, maximum_frequency)
+        system_metrics.update_all_usage(current_usage)
+        if current_temperatures:
+            system_metrics.update_all_temperatures(current_temperatures)
 
         # Step 2.5: Update minimum average frequencies (start tracking immediately)
-        for core_index, core_history in enumerate(frequency_histories):
-            if len(core_history) > 0:  # Have at least one sample
-                current_average = sum(core_history) / len(core_history)
-                if minimum_averages[core_index] is None:
-                    # First time, initialize with current average
-                    minimum_averages[core_index] = current_average
-                else:
-                    # Update minimum if current average is lower
-                    minimum_averages[core_index] = min(minimum_averages[core_index], current_average)
+        system_metrics.update_minimum_averages()
 
         # Step 3: Clear the screen to prepare for new display
         screen.erase()
@@ -684,11 +673,14 @@ def main_display_loop(screen, system_metrics: SystemMetrics, maximum_frequency):
         screen_height, screen_width = screen.getmaxyx()
 
         # Step 5: Check for alert conditions (throttling, high usage)
+        frequency_histories = system_metrics.get_frequency_histories()
+        usage_histories = system_metrics.get_usage_histories()
         alert_active, alert_type, average_frequencies, average_usage = detect_alerts(
             frequency_histories, usage_histories, maximum_frequency
         )
         
         # Calculate temperature averages for display
+        temperature_histories = system_metrics.get_temperature_histories()
         average_temperatures = None
         if any(len(temp_hist) > 0 for temp_hist in temperature_histories):
             average_temperatures = []
@@ -737,6 +729,7 @@ def main_display_loop(screen, system_metrics: SystemMetrics, maximum_frequency):
         # Step 8: Draw all the interface components
 
         # Draw the statistics box (averages and percentages)
+        minimum_averages = system_metrics.get_minimum_averages()
         draw_statistics_box(
             screen,
             (stats_box_x, stats_box_y, stats_box_width, stats_box_height),
